@@ -4,7 +4,29 @@
 
   var $ = function (id) { return document.getElementById(id); };
   var canvas, ctx, game = null, paused = false, raf = 0;
+  var last = 0, simulationLag = 0;
   var lastTurn = -1, lastWeaponSig = '';
+  var lan = null;
+
+  // Chrome 102 在 Windows 7 上经常退回软件 Canvas。游戏逻辑仍以 60Hz
+  // 固定步长推进，只有绘制降到 30fps/较低内部像素，避免画面占满主线程后
+  // 键盘事件排队数百毫秒甚至数秒。
+  var FIXED_STEP_MS = 16;
+  var MAX_CATCH_UP_STEPS = 4;
+  var legacyWindows = typeof navigator !== 'undefined' && /Windows NT 6\.[01]/.test(navigator.userAgent || '');
+  var renderState = {
+    lite: legacyWindows,
+    reason: legacyWindows ? 'windows7' : 'normal',
+    maxFps: legacyWindows ? 30 : 60,
+    scale: legacyWindows ? 0.75 : 1,
+    ratio: 1,
+    desynchronized: !legacyWindows,
+    lastPaint: 0,
+    averagePaintMs: 0,
+    samples: 0,
+    lastAdaptAt: 0
+  };
+  window.__renderStats = renderState;
 
   var setup = {
     mode: '1v1',
@@ -23,6 +45,227 @@
     $('screen-' + name).classList.add('active');
     if (name === 'game') resize();
   }
+
+  function clockNow() {
+    return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+  }
+
+  function gameViewportSize() {
+    var host = $('screen-game');
+    var root = document.documentElement;
+    var width = host && host.clientWidth;
+    var height = host && host.clientHeight;
+    // screen-game 隐藏时尺寸为 0；使用视口作为初始化回退，绝不从已缩小的
+    // Canvas backing store 反推显示尺寸。
+    if (!width) width = (root && root.clientWidth) || window.innerWidth || 1;
+    if (!height) height = (root && root.clientHeight) || window.innerHeight || 1;
+    return { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) };
+  }
+
+  function syncGameRenderProfile() {
+    if (document.body && document.body.classList) document.body.classList.toggle('perf-lite', renderState.lite);
+    if (game && game.setLowQuality) game.setLowQuality(renderState.lite);
+  }
+
+  function resetLoopTiming() {
+    last = 0;
+    simulationLag = 0;
+    renderState.lastPaint = 0;
+    renderState.averagePaintMs = 0;
+    renderState.samples = 0;
+  }
+
+  function enableLiteRendering(reason) {
+    if (!renderState.lite) {
+      renderState.lite = true;
+      renderState.maxFps = 30;
+      renderState.scale = Math.min(renderState.scale, 0.75);
+    }
+    renderState.reason = reason || renderState.reason;
+    renderState.lastAdaptAt = clockNow();
+    renderState.averagePaintMs = 0;
+    renderState.samples = 0;
+    syncGameRenderProfile();
+    resize();
+  }
+
+  // ================= 局域网大厅 =================
+  function lanText(id, text, isError) {
+    $(id).textContent = text || '';
+    $(id).classList.toggle('error', !!isError);
+  }
+
+  function ensureLan() {
+    if (lan) return lan;
+    var client = new RZ.LanClient();
+    lan = {
+      client: client, playerId: 0, roomId: '', inBattle: false, pausedByNetwork: false,
+      lastHostPlayerId: null, inputSeq: 0, inputAck: 0, lastProcessedInputSeq: 0,
+      pendingInputs: [], unsentMoves: [], unsentAngle: null, predictedFireSeq: 0,
+      inputAt: 0, lastInputFlushAt: 0, projectileTime: 0,
+      players: {
+        1: { connected: false, ready: false, vehicleId: setup.picks[0] },
+        2: { connected: false, ready: false, vehicleId: setup.picks[1] }
+      }
+    };
+    client.onMessage(onLanMessage);
+    return lan;
+  }
+
+  function openLanLobby() {
+    stopGame();
+    var state = ensureLan();
+    show('lan');
+    $('lan-entry').hidden = false;
+    $('lan-room').hidden = true;
+    lanText('lan-entry-status', '正在连接服务器...');
+    setLanConnection('connecting');
+    state.client.connect().then(function () {
+      lanText('lan-entry-status', '已连接，可以创建或加入房间');
+    }).catch(function (err) {
+      lanText('lan-entry-status', err.message, true);
+      setLanConnection('error');
+    });
+  }
+
+  function setLanConnection(state) {
+    var el = $('lan-connection');
+    el.classList.toggle('online', state === 'connected');
+    el.classList.toggle('error', state === 'error' || state === 'disconnected');
+    el.textContent = state === 'connected' ? '服务器已连接' : state === 'connecting' ? '正在连接...' :
+      state === 'disconnected' ? '连接已断开' : state === 'error' ? '连接失败' : '未连接';
+  }
+
+  function enterLanRoom(message) {
+    lan.playerId = message.playerId; lan.roomId = message.roomId;
+    lan.players[1].connected = message.playerId === 1;
+    lan.players[2].connected = message.playerId === 2;
+    lan.players[message.playerId].vehicleId = $('lan-vehicle').value || setup.picks[message.playerId - 1];
+    $('lan-room-id').textContent = message.roomId;
+    $('lan-entry').hidden = true;
+    $('lan-room').hidden = false;
+    $('btn-lan-ready').textContent = '准备';
+    renderLanRoom();
+    lan.client.sendLobby(lan.players[message.playerId].vehicleId, false);
+  }
+
+  function renderLanRoom() {
+    if (!lan) return;
+    for (var id = 1; id <= 2; id++) {
+      var p = lan.players[id], card = $('lan-player-' + id);
+      card.classList.toggle('local', id === lan.playerId);
+      card.classList.toggle('ready', !!p.ready);
+      $('lan-name-' + id).textContent = p.connected ? RZ.vehicleById(p.vehicleId).name : (id === 1 ? '等待中' : '等待加入');
+      $('lan-ready-' + id).textContent = p.connected ? (p.ready ? '已准备' : '未准备') : '离线';
+    }
+    var peer = lan.players[lan.playerId === 1 ? 2 : 1];
+    lanText('lan-room-status', peer.connected ? (peer.ready ? '对方已准备' : '玩家已加入，等待准备...') : '等待另一名玩家加入...');
+    $('btn-lan-ready').disabled = !peer.connected;
+    $('lan-vehicle').disabled = !!lan.players[lan.playerId].ready;
+  }
+
+  function onLanMessage(message) {
+    if (!lan) return;
+    if (message.type === 'NETWORK_STATUS') {
+      setLanConnection(message.state);
+      if (message.state === 'disconnected' && lan.inBattle) {
+        lan.pausedByNetwork = true;
+        lan.pendingInputs.length = 0; lan.unsentMoves.length = 0; lan.unsentAngle = null; lan.predictedFireSeq = 0;
+        showNetworkPause('与服务器连接断开');
+      }
+      return;
+    }
+    if (message.type === 'ERROR') {
+      var target = lan.roomId ? 'lan-room-status' : 'lan-entry-status';
+      lanText(target, message.message || '网络请求失败', true);
+      return;
+    }
+    if (message.type === 'ROOM_CREATED' || message.type === 'ROOM_JOINED' || message.type === 'RECONNECTED') {
+      if (message.type === 'RECONNECTED' && lan.inBattle) {
+        lan.playerId = message.playerId; lan.roomId = message.roomId; lan.pausedByNetwork = false;
+        hideNetworkPause();
+        if (lan.playerId === 1) sendLanSnapshot(true);
+      } else enterLanRoom(message);
+      return;
+    }
+    if (message.type === 'PLAYER_JOINED') {
+      lan.players[message.playerId].connected = true;
+      renderLanRoom();
+      lan.client.sendLobby(lan.players[lan.playerId].vehicleId, lan.players[lan.playerId].ready);
+      return;
+    }
+    if (message.type === 'LOBBY') {
+      var lp = lan.players[message.playerId];
+      lp.connected = true; lp.ready = !!message.ready;
+      if (message.vehicleId) lp.vehicleId = message.vehicleId;
+      renderLanRoom(); maybeStartLan(); return;
+    }
+    if (message.type === 'PLAYER_DISCONNECTED' || message.type === 'PLAYER_LEFT') {
+      if (lan.players[message.playerId]) lan.players[message.playerId].connected = false;
+      if (lan.inBattle) {
+        lan.pausedByNetwork = true;
+        showNetworkPause(message.type === 'PLAYER_LEFT' ? '对方已离开房间' : '对方已断线');
+      } else renderLanRoom();
+      return;
+    }
+    if (message.type === 'PLAYER_RECONNECTED') {
+      if (lan.players[message.playerId]) lan.players[message.playerId].connected = true;
+      lan.pausedByNetwork = false;
+      if (lan.inBattle) { hideNetworkPause(); if (lan.playerId === 1) sendLanSnapshot(true); }
+      else renderLanRoom();
+      return;
+    }
+    if (message.type === 'ROOM_CLOSED') {
+      if (lan.inBattle) showNetworkPause('房间已关闭');
+      else resetLanRoom(message.reason === 'host_left' ? '房主已离开房间' : '房间已关闭');
+      return;
+    }
+    if (message.type === 'GAME_EVENT' && message.event === 'START_GAME') {
+      startLanGame(message.config);
+      return;
+    }
+    handleLanGameMessage(message);
+  }
+
+  function maybeStartLan() {
+    if (!lan || lan.playerId !== 1 || lan.inBattle) return;
+    if (!lan.players[1].connected || !lan.players[2].connected || !lan.players[1].ready || !lan.players[2].ready) return;
+    var config = {
+      mapId: setup.mapId,
+      players: [
+        { playerId: 1, vehicleId: lan.players[1].vehicleId },
+        { playerId: 2, vehicleId: lan.players[2].vehicleId }
+      ]
+    };
+    lan.client.send({ type: 'GAME_EVENT', event: 'START_GAME', config: config });
+    startLanGame(config);
+  }
+
+  function resetLanRoom(message) {
+    if (!lan) return;
+    lan.roomId = ''; lan.playerId = 0; lan.inBattle = false; lan.lastHostPlayerId = null;
+    lan.inputSeq = lan.inputAck = lan.lastProcessedInputSeq = 0;
+    lan.pendingInputs.length = 0; lan.unsentMoves.length = 0; lan.unsentAngle = null;
+    lan.predictedFireSeq = 0; lan.inputAt = lan.lastInputFlushAt = lan.projectileTime = 0;
+    lan.players[1].connected = lan.players[2].connected = false;
+    lan.players[1].ready = lan.players[2].ready = false;
+    $('lan-entry').hidden = false; $('lan-room').hidden = true;
+    lanText('lan-entry-status', message || '已离开房间');
+  }
+
+  function leaveLanRoom() {
+    if (!lan) return;
+    lan.client.leave();
+    stopGame(); resetLanRoom('已离开房间'); show('lan');
+  }
+
+  function startLanGame(config) { startLanAuthoritativeGame(config); }
+  function handleLanGameMessage(message) { applyLanGameMessage(message); }
+  function showNetworkPause(text) {
+    if ($('network-pause-text')) $('network-pause-text').textContent = text;
+    if ($('overlay-network')) $('overlay-network').classList.add('show');
+  }
+  function hideNetworkPause() { if ($('overlay-network')) $('overlay-network').classList.remove('show'); }
 
   document.addEventListener('click', function (e) {
     var t = e.target.closest ? e.target.closest('[data-go]') : null;
@@ -251,8 +494,11 @@
       guide: setup.guide,
       humanTeam: setup.mode === 'hotseat' ? null : 0
     });
+    resetLoopTiming();
+    syncGameRenderProfile();
     window.__game = game;                       // 调试/自检用的句柄
-    game.viewW = canvas.clientWidth; game.viewH = canvas.clientHeight;
+    var viewport = gameViewportSize();
+    game.viewW = viewport.width; game.viewH = viewport.height;
     game.cam.x = game.cam.tx = Math.max(0, game.active.x - game.viewW / 2);
     game.cam.y = game.cam.ty = Math.max(0, game.active.y - game.viewH / 2);
     lastTurn = -1; lastWeaponSig = ''; lastItemSig = ''; armedItem = -1;
@@ -266,8 +512,142 @@
     if (!raf) raf = requestAnimationFrame(loop);
   }
 
+  function prepareGameUI() {
+    resetLoopTiming();
+    syncGameRenderProfile();
+    window.__game = game;
+    var viewport = gameViewportSize();
+    game.viewW = viewport.width; game.viewH = viewport.height;
+    game.cam.x = game.cam.tx = Math.max(0, game.active.x - game.viewW / 2);
+    game.cam.y = game.cam.ty = Math.max(0, game.active.y - game.viewH / 2);
+    lastTurn = -1; lastWeaponSig = ''; lastItemSig = ''; armedItem = -1;
+    resetHUDCache(); paused = false;
+    $('overlay-pause').classList.remove('show');
+    $('overlay-result').classList.remove('show');
+    $('overlay-network').classList.remove('show');
+    $('btn-guide').classList.toggle('on', setup.guide);
+    $('btn-mute').classList.toggle('on', !RZ.SFX.isMuted());
+    show('game');
+    if (!raf) raf = requestAnimationFrame(loop);
+  }
+
+  /** P1 创建唯一权威 Game；P2 等待首个 STATE_SNAPSHOT 后只创建绘制镜像。 */
+  function startLanAuthoritativeGame(config) {
+    if (!lan || lan.inBattle) return;
+    lan.inBattle = true; lan.pausedByNetwork = false; lan.pendingConfig = config;
+    lan.lastSendAt = 0; lan.lastHostPlayerId = null; lan.remoteCharging = false; lan.inputAt = 0;
+    lan.inputSeq = lan.inputAck = lan.lastProcessedInputSeq = 0;
+    lan.pendingInputs.length = 0; lan.unsentMoves.length = 0; lan.unsentAngle = null;
+    lan.predictedFireSeq = 0; lan.inputAt = lan.lastInputFlushAt = lan.projectileTime = 0;
+    if (lan.playerId !== 1) {
+      lanText('lan-room-status', '正在接收房主的战场状态...');
+      return;
+    }
+    var roster = config.players.map(function (p, idx) {
+      var vehicle = RZ.vehicleById(p.vehicleId);
+      return {
+        vehicle: vehicle, team: idx, ai: false, playerId: p.playerId,
+        name: vehicle.name, items: setup.loadout[Math.min(idx, setup.loadout.length - 1)].slice()
+      };
+    });
+    game = new RZ.Game({
+      mapId: config.mapId, roster: roster, difficulty: 'normal', guide: setup.guide,
+      humanTeam: 0, localPlayerId: 1,
+      networkEvent: function (event, data) {
+        if (!lan || lan.playerId !== 1) return;
+        lan.client.send({ type: 'GAME_EVENT', event: event, data: data });
+      }
+    });
+    prepareGameUI();
+    sendLanSnapshot(true);
+  }
+
+  function createLanMirror(state) {
+    var roster = state.units.map(function (u) {
+      return { vehicle: RZ.vehicleById(u.vehicleId), team: u.team, ai: false, playerId: u.playerId, name: u.name, items: u.items || [] };
+    });
+    game = new RZ.Game({
+      mapId: state.mapId, roster: roster, difficulty: 'normal', guide: setup.guide,
+      humanTeam: lan.playerId - 1, localPlayerId: lan.playerId
+    });
+    game.applyVisibleState(state);
+    prepareGameUI();
+  }
+
+  function sendLanSnapshot(full) {
+    if (!lan || !lan.inBattle || lan.playerId !== 1 || !game) return;
+    var now = performance.now ? performance.now() : Date.now();
+    // STATE_DELTA 可由下一份状态完全替代；积压时跳过旧帧，避免 TCP 队列把客户端越拖越慢。
+    if (!full && !lan.client.canSendVolatile()) { lan.lastSendAt = now; return false; }
+    var state = game.visibleStateForPlayer(2, !!full);
+    state.inputAck = lan.lastProcessedInputSeq || 0;
+    if (lan.lastHostPlayerId !== state.currentPlayerId) {
+      if (!lan.client.send({ type: 'HOST_STATE', currentPlayerId: state.currentPlayerId, started: true })) return false;
+      lan.lastHostPlayerId = state.currentPlayerId;
+    }
+    var sent = full
+      ? lan.client.send({ type: 'STATE_SNAPSHOT', state: state })
+      : lan.client.sendVolatile({ type: 'GAME_EVENT', event: 'STATE_DELTA', state: state });
+    if (!sent) { lan.lastSendAt = now; return false; }
+    game.networkDirty = null;
+    lan.lastSendAt = now;
+    return true;
+  }
+
+  function applyLanGameMessage(message) {
+    if (!lan || !lan.inBattle) return;
+    if (message.type === 'ACTION' && lan.playerId === 1 && game) {
+      var accepted = game.applyNetworkAction(message.playerId, message);
+      if (message.playerId === 2 && Number.isInteger(message.inputSeq)) {
+        lan.lastProcessedInputSeq = Math.max(lan.lastProcessedInputSeq || 0, message.inputSeq);
+      }
+      if (!accepted) lan.client.send({ type: 'GAME_EVENT', event: 'ACTION_REJECTED', data: { action: message.action, inputSeq: message.inputSeq } });
+      // 连续输入维持 20Hz 合并；离散操作立即确认，避免开火或选道具再等下一帧快照。
+      if (game.networkDirty === 'full') sendLanSnapshot(true);
+      else if (message.action !== 'MOVE' && message.action !== 'SET_ANGLE') sendLanSnapshot(false);
+      return;
+    }
+    if (lan.playerId !== 2) return;
+    if (message.type === 'STATE_SNAPSHOT' || (message.type === 'GAME_EVENT' && message.event === 'STATE_DELTA')) {
+      var state = message.state;
+      if (!state) return;
+      if (!game) createLanMirror(state);
+      else {
+        // 本地已经预测开火时，丢弃尚未确认 FIRE 的旧 aim 快照。否则炮弹会先
+        // 出现、又被旧状态抹掉，直到一次完整 RTT 后才重新出现。
+        var stateAck = Number(state.inputAck) || 0;
+        if (lan.predictedFireSeq && stateAck < lan.predictedFireSeq) return;
+        // P2 蓄力是本地即时反馈，权威端在收到 FIRE 之前理应仍是 power=0。
+        // 应用快照后恢复本地预测值，不能让 20Hz 快照把蓄力条反复清零。
+        var localPower = lan.remoteCharging && game.active && game.active.playerId === lan.playerId
+          ? game.active.power : null;
+        var predictedControls = captureLanPredictedControls();
+        if (!game.applyVisibleState(state)) return;
+        reconcileLanPredictedInputs(state, predictedControls);
+        if (localPower != null && game.active && game.active.playerId === lan.playerId && game.phase === 'aim') {
+          game.active.power = Math.max(localPower, game.active.power);
+          if (lan.inputAngle != null) game.active.aim = lan.inputAngle;
+        }
+      }
+      if (game && game.active && game.active.playerId === lan.playerId && !lan.remoteCharging) lan.inputAngle = game.active.aim;
+      return;
+    }
+    if (message.type === 'GAME_EVENT' && game) {
+      var data = message.data || {};
+      if (message.event === 'EXPLOSION') {
+        game.terrain.carve(data.x, data.y, data.digRadius || data.radius);
+        game.fx.burst(data.x, data.y, data.radius || 40, ['#ffcc55', '#ff6a1f', '#ffffff']);
+      } else if (message.event === 'TERRAIN_TUNNEL') {
+        game.terrain.tunnel(data.x0, data.y0, data.x1, data.y1, data.radius);
+      } else if (message.event === 'ACTION_REJECTED') {
+        game.say('操作被权威端拒绝', '#ff8a8a');
+      }
+    }
+  }
+
   function stopGame() {
     game = null;
+    resetLoopTiming();
     RZ.SFX.stopCharge();
     if (raf) { cancelAnimationFrame(raf); raf = 0; }
   }
@@ -306,22 +686,65 @@
     if (!game || !$('screen-game').classList.contains('active')) return;
     if (k === 'Escape') { togglePause(); return; }
     if (paused || game.result !== null) return;
-    if (k === 'Space' && canControl()) game.startCharge();
-    if (k === '1') game.setWeapon(0);
-    if (k === '2') game.setWeapon(1);
-    if (k === '3') game.setWeapon(2);
-    if (k === 'Enter') { game.passTurn(); RZ.SFX.click(); }
+    if (k === 'Space' && canControl()) startLocalCharge();
+    if (k === '1' && canControl()) selectLocalWeapon(0);
+    if (k === '2' && canControl()) selectLocalWeapon(1);
+    if (k === '3' && canControl()) selectLocalWeapon(2);
+    if (k === 'Enter' && canControl()) { endLocalTurn(); RZ.SFX.click(); }
     if (k === 'g' || k === 'G') toggleGuide();
     if (k === 'm' || k === 'M') toggleMute();
   }
 
   function onKeyUp(k) {
     if (!game || paused || game.result !== null) return;
-    if (k === 'Space' && canControl()) game.releaseCharge();
+    if (lan && lan.inBattle && lan.playerId === 2 &&
+        ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(k) >= 0) {
+      // 结束连续操作时立即补发不足一个 33ms 批次的尾部输入，既避免测试/状态
+      // 校正竞态，也让短按方向键在高延迟网络下尽快抵达权威端。
+      flushLanContinuousInput(performance.now ? performance.now() : Date.now(), true);
+    }
+    if (k === 'Space' && canControl()) releaseLocalCharge();
   }
 
   function canControl() {
-    return game && game.active && !game.active.ai && game.phase === 'aim';
+    if (!game || !game.active || game.active.ai || game.phase !== 'aim') return false;
+    if (lan && lan.inBattle) return !lan.pausedByNetwork && game.active.playerId === lan.playerId;
+    return true;
+  }
+
+  function startLocalCharge() {
+    if (lan && lan.inBattle && lan.playerId === 2) {
+      lan.remoteCharging = true; game.active.power = 0; RZ.SFX.startCharge();
+    } else game.startCharge();
+  }
+  function releaseLocalCharge() {
+    if (lan && lan.inBattle && lan.playerId === 2) {
+      if (!lan.remoteCharging) return;
+      var firePower = Math.max(4, game.active.power);
+      lan.remoteCharging = false; RZ.SFX.stopCharge();
+      // 先把移动/角度批次送出，WebSocket 的有序传输保证 FIRE 在它们之后执行。
+      flushLanContinuousInput(performance.now ? performance.now() : Date.now(), true);
+      var fireAction = { action: 'FIRE', angle: game.active.aim, power: firePower, weapon: game.active.weaponIdx };
+      if (!sendLanPredictedInput(fireAction)) return;
+      // 画面立即开火；房主随后用带 inputAck 的权威状态校正命中、伤害和地形。
+      game.charging = true; game.active.power = firePower; game.fire();
+      lan.predictedFireSeq = fireAction.inputSeq;
+    } else game.releaseCharge();
+  }
+  function selectLocalWeapon(idx) {
+    if (lan && lan.inBattle && lan.playerId === 2) {
+      var weaponAction = { action: 'SELECT_WEAPON', weapon: idx };
+      if (sendLanPredictedInput(weaponAction)) game.setWeapon(idx);
+    }
+    else game.setWeapon(idx);
+  }
+  function endLocalTurn() {
+    if (lan && lan.inBattle && lan.playerId === 2) lan.client.sendAction({ action: 'END_TURN' });
+    else game.passTurn();
+  }
+  function useLocalItem(idx) {
+    if (lan && lan.inBattle && lan.playerId === 2) return lan.client.sendAction({ action: 'USE_ITEM', itemIndex: idx });
+    return game.useItem(idx);
   }
 
   // 触屏按钮映射到同一套虚拟按键
@@ -356,6 +779,7 @@
   }
   function togglePause() {
     if (!game || game.result !== null) return;
+    if (lan && lan.inBattle) { game.say('局域网对战中不能暂停', '#ffb4b4'); return; }
     paused = !paused;
     $('overlay-pause').classList.toggle('show', paused);
 
@@ -483,9 +907,11 @@
     }
     setHTML('ticker', tick);
 
-    setText('hint', u && u.ai ? '电脑正在瞄准…'
+    var waitingLan = lan && lan.inBattle && u && u.playerId !== lan.playerId;
+    setText('hint', waitingLan ? '等待对方行动...'
+      : (u && u.ai ? '电脑正在瞄准…'
       : (h.live && !h.unit.canAfford(h.unit.vehicle.w1) ? '燃料不足　Enter 跳过本回合攒油'
-        : '← → 移动　↑ ↓ 角度　空格 蓄力发射　Enter 跳过'));
+        : '← → 移动　↑ ↓ 角度　空格 蓄力发射　Enter 跳过')));
 
     if (game.turnNo !== lastTurn) {
       lastTurn = game.turnNo;
@@ -493,7 +919,8 @@
       $('item-tip').innerHTML = '';
       if (u) {
         var flash = $('turn-flash');
-        flash.textContent = u.ai ? '敌方回合' : (game.opts.humanTeam == null ? RZ.TEAM_NAMES[u.team] + '回合' : '你的回合');
+        flash.textContent = lan && lan.inBattle ? (u.playerId === lan.playerId ? '你的回合' : '等待对方行动')
+          : (u.ai ? '敌方回合' : (game.opts.humanTeam == null ? RZ.TEAM_NAMES[u.team] + '回合' : '你的回合'));
         flash.style.color = RZ.TEAM_COLORS[u.team];
         flash.classList.remove('go');
         void flash.offsetWidth;
@@ -518,7 +945,7 @@
       // 只写耗油：延迟、还能轮到谁，都归玩家自己盘算
       b.innerHTML = '<u>' + d.tag + '</u><b>' + d.w.name + '</b><s>耗油 ' + d.w.fuel + '</s>';
       b.disabled = !live || !afford;
-      b.onclick = function () { if (live) game.setWeapon(i); };
+      b.onclick = function () { if (live) selectLocalWeapon(i); };
       box.appendChild(b);
     });
   }
@@ -556,7 +983,7 @@
           } else {                                  // 第二下：确认使用
             armedItem = -1;
             $('item-tip').innerHTML = '';
-            game.useItem(idx);
+            useLocalItem(idx);
           }
           lastItemSig = '';                          // 强制重画
         };
@@ -632,48 +1059,240 @@
   }
 
   // ================= 主循环 =================
-  var last = 0;
   function loop(ts) {
     raf = requestAnimationFrame(loop);
-    var dt = last ? Math.min(50, ts - last) : 16;
+    var elapsed = last ? Math.max(0, Math.min(64, ts - last)) : FIXED_STEP_MS;
     last = ts;
-    if (!game || !$('screen-game').classList.contains('active')) return;
+    if (!game || !$('screen-game').classList.contains('active')) { simulationLag = 0; return; }
 
-    if (!paused && game.result === null) {
-      game.applyHeld(keys);
-      game.update(dt);
-    }
+    if (!paused && game.result === null && !(lan && lan.inBattle && lan.pausedByNetwork)) {
+      simulationLag = Math.min(FIXED_STEP_MS * MAX_CATCH_UP_STEPS, simulationLag + elapsed);
+      var steps = 0;
+      while (simulationLag >= FIXED_STEP_MS && steps < MAX_CATCH_UP_STEPS) {
+        if (lan && lan.inBattle && lan.playerId === 2) updateLanGuestInput(FIXED_STEP_MS);
+        else {
+          if (canControl()) game.applyHeld(keys);
+          game.update(FIXED_STEP_MS);
+        }
+        simulationLag -= FIXED_STEP_MS;
+        steps++;
+      }
+      // 网络发送按真实时间限频，不能在掉帧补算时连续突发多批数据。
+      if (lan && lan.inBattle && lan.playerId === 2) flushLanContinuousInput(ts, false);
+      if (lan && lan.inBattle && lan.playerId === 1) {
+        var full = game.networkDirty === 'full';
+        if (full || ts - (lan.lastSendAt || 0) >= 50) sendLanSnapshot(full);
+      }
+    } else simulationLag = 0;
 
-    var w = canvas.clientWidth, h = canvas.clientHeight;
+    // Win7/软件 Canvas 只绘制 30fps，但上面的输入与物理仍按 60Hz 推进。
+    if (renderState.maxFps < 60 && renderState.lastPaint &&
+        ts - renderState.lastPaint < 1000 / renderState.maxFps - 1) return;
+
+    var viewport = gameViewportSize(), w = viewport.width, h = viewport.height;
+    if (w !== renderState.clientWidth || h !== renderState.clientHeight) resize();
+    var paintStarted = clockNow();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    var dpr = window.devicePixelRatio || 1;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(renderState.ratio, 0, 0, renderState.ratio, 0, 0);
     game.draw(ctx, w, h);
     updateHUD();
+    renderState.lastPaint = ts;
+    recordPaintCost(clockNow() - paintStarted, ts);
 
     if (game.result != null && !$('overlay-result').classList.contains('show')) {
       if (game.projectiles.length === 0) showResult();
     }
   }
 
+  function recordPaintCost(cost, ts) {
+    renderState.averagePaintMs = renderState.samples
+      ? renderState.averagePaintMs * 0.9 + cost * 0.1 : cost;
+    renderState.samples++;
+    if (renderState.samples < 20 || ts - renderState.lastAdaptAt < 2500) return;
+    if (!renderState.lite && renderState.averagePaintMs > 24) {
+      enableLiteRendering('adaptive');
+    } else if (renderState.lite && renderState.averagePaintMs > 36 && renderState.scale > 0.56) {
+      renderState.scale = Math.max(0.56, renderState.scale - 0.15);
+      renderState.lastAdaptAt = ts;
+      renderState.averagePaintMs = 0;
+      renderState.samples = 0;
+      resize();
+    }
+  }
+
+  var LAN_INPUT_SEND_MS = 33;
+
+  function updateLanGuestInput(dt) {
+    // 镜像端本地推进弹道画面；碰撞结果、伤害、地形和回合仍以房主为准。
+    game.t += 16; game.fx.update(); game.bg.update(game.t);
+    advanceLanGuestProjectiles(dt);
+    if (!canControl()) { if (lan.remoteCharging) { lan.remoteCharging = false; RZ.SFX.stopCharge(); } return; }
+    if (lan.remoteCharging) {
+      game.active.power = Math.min(100, game.active.power + 0.8);
+      RZ.SFX.updateCharge(game.active.power);
+    }
+    // 画面按 60Hz 立即响应，网络则以约 30Hz 批量上报。这样高 RTT 时不会在
+    // WebSocket 中堆积每秒 60 条小消息，也不让网络是否可写阻塞本地操作。
+    var moveDirection = keys.ArrowLeft ? 'left' : keys.ArrowRight ? 'right' : '';
+    if (moveDirection && game.moveActive(moveDirection === 'left' ? -1 : 1)) lan.unsentMoves.push(moveDirection);
+    if (keys.ArrowUp || keys.ArrowDown) {
+      var d = keys.ArrowUp ? 1 : -1;
+      var nextAngle = Math.max(-25, Math.min(90, game.active.aim + d));
+      if (nextAngle !== game.active.aim) {
+        game.active.aim = nextAngle; lan.inputAngle = nextAngle; lan.unsentAngle = nextAngle;
+      }
+    }
+  }
+
+  function flushLanContinuousInput(ts, force) {
+    if (!force && ts - (lan.lastInputFlushAt || 0) < LAN_INPUT_SEND_MS) return false;
+    var sent = false;
+    while (lan.unsentMoves.length) {
+      var direction = lan.unsentMoves[0], steps = 1;
+      while (steps < 4 && lan.unsentMoves[steps] === direction) steps++;
+      if (!sendLanPredictedInput({ action: 'MOVE', direction: direction, steps: steps })) break;
+      lan.unsentMoves.splice(0, steps); sent = true;
+    }
+    if (lan.unsentAngle != null) {
+      var angle = lan.unsentAngle;
+      if (sendLanPredictedInput({ action: 'SET_ANGLE', value: angle })) {
+        if (lan.unsentAngle === angle) lan.unsentAngle = null;
+        sent = true;
+      }
+    }
+    if (sent) lan.lastInputFlushAt = ts;
+    return sent;
+  }
+
+  function sendLanPredictedInput(action) {
+    action.inputSeq = (lan.inputSeq || 0) + 1;
+    if (!lan.client.sendAction(action)) return false;
+    lan.inputSeq = action.inputSeq;
+    lan.pendingInputs.push(action);
+    return true;
+  }
+
+  function captureLanPredictedControls() {
+    if (!game.active || game.active.playerId !== lan.playerId || game.phase !== 'aim') return null;
+    var hasPrediction = lan.unsentMoves.length > 0 || lan.unsentAngle != null;
+    for (var i = 0; !hasPrediction && i < lan.pendingInputs.length; i++) {
+      var action = lan.pendingInputs[i].action;
+      hasPrediction = action === 'MOVE' || action === 'SET_ANGLE' || action === 'SELECT_WEAPON';
+    }
+    if (!hasPrediction) return null;
+    var u = game.active;
+    return {
+      index: u.index, x: u.x, y: u.y, vy: u.vy, face: u.face, aim: u.aim,
+      fuel: u.fuel, spentThisTurn: u.spentThisTurn, moveSpent: u.moveSpent,
+      airborne: u.airborne, fallFrom: u.fallFrom, weaponIdx: u.weaponIdx
+    };
+  }
+
+  function restoreLanPredictedControls(predicted) {
+    if (!predicted || !game.active || game.active.index !== predicted.index || game.phase !== 'aim') return;
+    var u = game.active;
+    var fields = ['x','y','vy','face','aim','fuel','spentThisTurn','moveSpent','airborne','fallFrom','weaponIdx'];
+    for (var i = 0; i < fields.length; i++) u[fields[i]] = predicted[fields[i]];
+  }
+
+  function reconcileLanPredictedInputs(state, predictedControls) {
+    var ack = Number(state.inputAck) || 0;
+    lan.inputAck = Math.max(lan.inputAck || 0, ack);
+    lan.pendingInputs = lan.pendingInputs.filter(function (input) { return input.inputSeq > lan.inputAck; });
+    if (lan.predictedFireSeq && lan.inputAck >= lan.predictedFireSeq) lan.predictedFireSeq = 0;
+    if (!game.active || game.active.playerId !== lan.playerId || game.phase !== 'aim') {
+      lan.pendingInputs.length = 0; lan.unsentMoves.length = 0; lan.unsentAngle = null;
+      return;
+    }
+    var stillPredicted = lan.unsentMoves.length > 0 || lan.unsentAngle != null;
+    for (var i = 0; !stillPredicted && i < lan.pendingInputs.length; i++) {
+      var action = lan.pendingInputs[i].action;
+      stillPredicted = action === 'MOVE' || action === 'SET_ANGLE' || action === 'SELECT_WEAPON';
+    }
+    // 保留已经呈现的预测结果，不再对每一份快照重放全部 pending 输入。
+    // RTT 越高，旧实现的重放次数越多；这里把每次校正固定为 O(1)。
+    if (stillPredicted) restoreLanPredictedControls(predictedControls);
+  }
+
+  function updateLanGuestProjectiles() {
+    if (!game.projectiles.length) return;
+    var spawned = [];
+    var env = {
+      terrain: game.terrain, gravity: game.map.gravity, wind: game.wind,
+      units: game.units, recordTrail: true, spawn: spawned
+    };
+    for (var i = game.projectiles.length - 1; i >= 0; i--) {
+      var p = game.projectiles[i], event = RZ.step(p, env);
+      if ((p.age & 3) === 0) game.fx.trailPuff(p.x, p.y, p.w.shell.trail);
+      if (!event) continue;
+      if (event.type === 'bounce') { RZ.SFX.bounce(); continue; }
+      if (event.type === 'split') game.fx.burst(event.x, event.y, 16, [p.w.shell.color, '#ffffff']);
+      game.projectiles.splice(i, 1);
+    }
+    while (spawned.length) game.projectiles.push(spawned.pop());
+    game.updateCamera();
+  }
+
+  function advanceLanGuestProjectiles(dt) {
+    if (!game.projectiles.length) { lan.projectileTime = 0; return; }
+    lan.projectileTime = (lan.projectileTime || 0) + Math.min(50, dt || 16);
+    while (lan.projectileTime >= 16 && game.projectiles.length) {
+      updateLanGuestProjectiles();
+      lan.projectileTime -= 16;
+    }
+  }
+
   function resize() {
     if (!canvas) return;
-    var dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(canvas.clientWidth * dpr);
-    canvas.height = Math.round(canvas.clientHeight * dpr);
-    if (game) { game.viewW = canvas.clientWidth; game.viewH = canvas.clientHeight; }
+    var viewport = gameViewportSize();
+    var clientWidth = viewport.width;
+    var clientHeight = viewport.height;
+    // Chrome 102 / Win7 有时会把低分辨率 backing store 当成元素布局尺寸。
+    // 显式固定 CSS 像素尺寸，内部 canvas.width/height 仍可独立降采样。
+    canvas.style.width = clientWidth + 'px';
+    canvas.style.height = clientHeight + 'px';
+    var dpr = Math.max(1, Math.min(renderState.lite ? 1 : 1.25, window.devicePixelRatio || 1));
+    var ratio = dpr * renderState.scale;
+    // 限制软件 Canvas 的总像素数；CSS 负责放大，游戏世界坐标保持不变。
+    var maxPixels = renderState.lite ? 700000 : 1500000;
+    ratio = Math.min(ratio, Math.sqrt(maxPixels / (clientWidth * clientHeight)));
+    ratio = Math.max(0.5, ratio);
+    var pixelWidth = Math.max(1, Math.round(clientWidth * ratio));
+    var pixelHeight = Math.max(1, Math.round(clientHeight * ratio));
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    renderState.clientWidth = clientWidth;
+    renderState.clientHeight = clientHeight;
+    renderState.ratio = ratio;
+    if (ctx) {
+      ctx.imageSmoothingEnabled = true;
+      if ('imageSmoothingQuality' in ctx) ctx.imageSmoothingQuality = renderState.lite ? 'low' : 'medium';
+    }
+    if (game) { game.viewW = clientWidth; game.viewH = clientHeight; }
   }
   window.addEventListener('resize', resize);
 
   // ================= 启动 =================
   window.addEventListener('DOMContentLoaded', function () {
     canvas = $('stage');
-    ctx = canvas.getContext('2d');
+    // alpha:false 避免每帧与页面背景做透明合成。Win7 的旧桌面合成器在
+    // desynchronized + CSS 拉伸时会只呈现左上角 backing store，因此该提示
+    // 只在现代 Windows 上启用。
+    var contextOptions = legacyWindows ? { alpha: false } : { alpha: false, desynchronized: true };
+    ctx = canvas.getContext('2d', contextOptions) || canvas.getContext('2d');
+    syncGameRenderProfile();
     buildMaps();
     buildVehicles();
     buildShop();
     buildCodex();
+    var lanSelect = $('lan-vehicle');
+    lanSelect.innerHTML = '';
+    RZ.VEHICLES.forEach(function (v) {
+      var o = document.createElement('option'); o.value = v.id; o.textContent = v.name + ' · ' + v.tag;
+      lanSelect.appendChild(o);
+    });
+    lanSelect.value = setup.picks[0];
     chipGroup('mode-chips', 'mode', String);
     chipGroup('diff-chips', 'difficulty', String);
     chipGroup('guide-chips', 'guide', function (v) { return v === '1'; });
@@ -690,11 +1309,46 @@
       setup.pickSlot = 0;
       startGame();
     };
+    $('btn-lan-menu').onclick = function () { RZ.SFX.resume(); RZ.SFX.click(); openLanLobby(); };
+    $('btn-lan-back').onclick = function () {
+      if (lan && lan.roomId) lan.client.leave();
+      if (lan) { lan.client.close(); lan = null; }
+      stopGame(); show('title');
+    };
+    $('btn-create-room').onclick = function () {
+      var state = ensureLan();
+      state.client.connect().then(function () { state.client.createRoom(); }).catch(function (err) {
+        lanText('lan-entry-status', err.message, true);
+      });
+    };
+    $('btn-join-room').onclick = function () {
+      var roomId = $('lan-room-input').value.replace(/\D/g, '');
+      if (!/^\d{6}$/.test(roomId)) { lanText('lan-entry-status', '请输入 6 位房间号', true); return; }
+      var state = ensureLan();
+      state.client.connect().then(function () { state.client.joinRoom(roomId); }).catch(function (err) {
+        lanText('lan-entry-status', err.message, true);
+      });
+    };
+    $('lan-room-input').oninput = function () { this.value = this.value.replace(/\D/g, '').slice(0, 6); };
+    $('btn-leave-room').onclick = leaveLanRoom;
+    lanSelect.onchange = function () {
+      if (!lan || !lan.playerId) return;
+      lan.players[lan.playerId].vehicleId = this.value;
+      lan.players[lan.playerId].ready = false;
+      lan.client.sendLobby(this.value, false); renderLanRoom();
+    };
+    $('btn-lan-ready').onclick = function () {
+      if (!lan || !lan.playerId) return;
+      var p = lan.players[lan.playerId]; p.ready = !p.ready;
+      $('btn-lan-ready').textContent = p.ready ? '取消准备' : '准备';
+      lan.client.sendLobby(p.vehicleId, p.ready); renderLanRoom(); maybeStartLan();
+    };
     $('btn-resume').onclick = togglePause;
-    $('btn-restart').onclick = startGame;
-    $('btn-quit').onclick = function () { stopGame(); show('title'); };
-    $('btn-again').onclick = startGame;
-    $('btn-lobby').onclick = function () { stopGame(); show('title'); };
+    $('btn-restart').onclick = function () { if (lan && lan.inBattle) leaveLanRoom(); else startGame(); };
+    $('btn-quit').onclick = function () { if (lan && lan.inBattle) leaveLanRoom(); else { stopGame(); show('title'); } };
+    $('btn-again').onclick = function () { if (lan && lan.inBattle) leaveLanRoom(); else startGame(); };
+    $('btn-lobby').onclick = function () { if (lan && lan.inBattle) leaveLanRoom(); else { stopGame(); show('title'); } };
+    $('btn-network-quit').onclick = leaveLanRoom;
     $('btn-pause').onclick = togglePause;
     $('btn-guide').onclick = toggleGuide;
     $('btn-mute').onclick = toggleMute;

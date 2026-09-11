@@ -19,6 +19,7 @@
     this.name = cfg.name;
     this.team = cfg.team;
     this.ai = !!cfg.ai;
+    this.playerId = cfg.playerId == null ? null : cfg.playerId;
     this.maxHp = v.hp; this.hp = v.hp;
     this.atk = v.atk; this.def = v.def;
     this.maxFuel = RZ.MAX_FUEL; this.fuel = RZ.START_FUEL;
@@ -105,6 +106,12 @@
     this.result = null;
     this.messages = [];
     this.t = 0;
+    this.lowQuality = false;
+    this.nextMoveSoundAt = 0;
+    this.nextStunMessageAt = 0;
+    this.networkVersion = 0;
+    this.networkDirty = 'full';
+    this.networkEvent = typeof opts.networkEvent === 'function' ? opts.networkEvent : null;
 
     this.viewW = 1100; this.viewH = 620;   // draw() 每帧会覆盖成真实视口
     this.cam = { x: 0, y: 0, tx: 0, ty: 0, shake: 0 };
@@ -114,6 +121,11 @@
 
     this.beginTurn(true);
   }
+
+  Game.prototype.setLowQuality = function (enabled) {
+    this.lowQuality = !!enabled;
+    this.fx.lowQuality = this.lowQuality;
+  };
 
   Game.prototype.aliveOf = function (team) {
     return this.units.filter(function (u) { return u.alive && u.team === team; });
@@ -154,6 +166,10 @@
    */
   Game.prototype.viewUnit = function () {
     var a = this.active, i;
+    if (this.opts.localPlayerId != null) {
+      for (i = 0; i < this.units.length; i++) if (this.units[i].playerId === this.opts.localPlayerId) return this.units[i];
+      return null;
+    }
     if (a && !a.ai) return a;
     for (i = 0; i < this.units.length; i++) {
       if (!this.units[i].ai && this.units[i].alive) return this.units[i];
@@ -262,6 +278,7 @@
     if (!first) RZ.SFX.turn();
     if (this.turnNo % 4 === 0) this.dropSupply();
     this.checkWin();
+    this.markNetwork('full');
   };
 
   /**
@@ -317,6 +334,7 @@
     this.timedOut = false;
     this.checkWin();
     if (this.result === null) this.beginTurn(false);
+    this.markNetwork('full');
   };
 
   Game.prototype.checkWin = function () {
@@ -329,6 +347,8 @@
     if (human == null) RZ.SFX.win();
     else if (this.result === human) RZ.SFX.win();
     else RZ.SFX.lose();
+    this.markNetwork('full');
+    this.emitNetwork('RESULT', { result: this.result });
   };
 
   // ---- 燃料经济 ----
@@ -380,6 +400,7 @@
     this.applyItem(u, def);
     RZ.SFX.pickup();
     if (def.endsTurn) this.passTurn();
+    this.markNetwork('light');
     return true;
   };
 
@@ -456,6 +477,8 @@
     this.charging = false;
     RZ.SFX.stopCharge();
     if (!mode && u.weaponIdx === 2) this.say(u.name + ' 发动必杀 ' + w.name + '！', '#ffd166');
+    this.markNetwork('light');
+    this.emitNetwork('FIRE', { playerId: u.playerId, unitIndex: u.index, angle: u.aim, power: power, weapon: u.weaponIdx });
   };
 
   /** 放弃出手，按已花掉的油结算延迟 */
@@ -465,6 +488,7 @@
     RZ.SFX.stopCharge();
     this.phase = 'settle';
     this.settleTimer = 12;
+    this.markNetwork('light');
   };
 
   // ---- 爆炸 ----
@@ -474,6 +498,9 @@
     var damage = w.damage * (dmgMul || 1);
     var dig = radius * (w.digMul || 1);
     this.terrain.carve(x, y, dig);
+    // 镜像端会立即应用 EXPLOSION；回合结束时的完整快照再做地形校正。
+    this.markNetwork('light');
+    this.emitNetwork('EXPLOSION', { x: Math.round(x), y: Math.round(y), radius: radius, digRadius: dig });
     var s = w.shell;
     this.fx.burst(x, y, radius, [s.color, s.glow, '#ffffff', s.trail]);
     this.fx.debris(x, y, Math.min(26, radius * 0.35), this.map.ground.body);
@@ -569,6 +596,7 @@
     }
     RZ.SFX.hurt();
     if (target.hp <= 0) this.kill(target);
+    this.markNetwork('light');
   };
 
   Game.prototype.kill = function (u, silent) {
@@ -604,10 +632,17 @@
   };
 
   // ---- 移动 / 瞄准 ----
-  Game.prototype.moveActive = function (dir) {
+  Game.prototype.moveActive = function (dir, silent) {
     var u = this.active;
-    if (!u || this.phase !== 'aim' || u.airborne || u.fuel <= 0) return;
-    if (u.stunned > 0) { if ((this.t & 31) === 0) this.say('被麻痹了，动不了'); return; }
+    if (!u || this.phase !== 'aim' || u.airborne || u.fuel <= 0 || (dir !== -1 && dir !== 1)) return false;
+    if (u.stunned > 0) {
+      if (!silent && this.t >= this.nextStunMessageAt) {
+        this.nextStunMessageAt = this.t + 500;
+        this.say('被麻痹了，动不了');
+      }
+      return false;
+    }
+    var beforeX = u.x, beforeFuel = u.fuel, beforeFace = u.face;
     u.face = dir;
     var cost = u.vehicle.moveCost;
     // 还打得出一号武器就给它留着，已经打不出了就随便走——总不能把人钉在原地
@@ -632,7 +667,15 @@
       this.spend(u, step, 'move');
       stepsLeft--;
     }
-    if ((this.t & 7) === 0) RZ.SFX.move();
+    var changed = u.x !== beforeX || u.fuel !== beforeFuel || u.face !== beforeFace;
+    // this.t 每帧增加 16；旧的 (this.t & 7) 判断因此永远为 0，按住方向键
+    // 会每秒创建约 60 组 WebAudio 节点，在 Win7 上很快拖垮主线程。
+    if (!silent && u.x !== beforeX && this.t >= this.nextMoveSoundAt) {
+      this.nextMoveSoundAt = this.t + 96;
+      RZ.SFX.move();
+    }
+    if (changed) this.markNetwork('light');
+    return changed;
   };
 
   /** 每帧处理「按住不放」的按键；keys 是 {按键名: 布尔} */
@@ -649,6 +692,7 @@
     var u = this.active;
     if (!u || this.phase !== 'aim') return;
     u.aim = clamp(u.aim + d, -25, 90);
+    this.markNetwork('light');
   };
 
   Game.prototype.setWeapon = function (idx) {
@@ -658,6 +702,7 @@
     if (!u.canAfford(w)) { this.say('燃料不足：' + w.name + ' 需要 ' + w.fuel); return; }
     u.weaponIdx = idx;
     RZ.SFX.click();
+    this.markNetwork('light');
   };
 
   Game.prototype.startCharge = function () {
@@ -760,7 +805,12 @@
       terrain: this.terrain, gravity: this.map.gravity, wind: this.wind,
       units: this.units, recordTrail: true, spawn: this.pendingSpawn,
       dig: (function (g) {
-        return function (x0, y0, x1, y1, r) { g.terrain.tunnel(x0, y0, x1, y1, r); };
+        return function (x0, y0, x1, y1, r) {
+          g.terrain.tunnel(x0, y0, x1, y1, r);
+          // 镜像端会应用同一条隧道事件，避免飞行中反复导入整张地形。
+          g.markNetwork('light');
+          g.emitNetwork('TERRAIN_TUNNEL', { x0: x0, y0: y0, x1: x1, y1: y1, radius: r });
+        };
       })(this)
     };
 
@@ -957,43 +1007,72 @@
     this.viewW = viewW; this.viewH = viewH;
     var shakeX = (Math.random() - 0.5) * this.cam.shake * 2;
     var shakeY = (Math.random() - 0.5) * this.cam.shake * 2;
+    var viewLeft = this.cam.x + shakeX, viewTop = this.cam.y + shakeY;
+    var bounds = {
+      x0: viewLeft - 80, y0: viewTop - 100,
+      x1: viewLeft + viewW + 80, y1: viewTop + viewH + 100
+    };
 
     ctx.save();
-    ctx.translate(-Math.round(this.cam.x + shakeX), -Math.round(this.cam.y + shakeY));
+    ctx.translate(-Math.round(viewLeft), -Math.round(viewTop));
 
-    this.bg.draw(ctx, this.cam, this.t, this.night);
+    this.bg.draw(ctx, { x: viewLeft, y: viewTop }, this.t, this.night, viewW, viewH, this.lowQuality);
     this.terrain.flush();
-    ctx.drawImage(this.terrain.canvas, 0, 0);
+    // 显式裁出视口，避免 Win7 软件 Canvas 每帧搬运整张 1900x800 地形位图。
+    var terrainX = Math.max(0, Math.floor(viewLeft) - 2);
+    var terrainY = Math.max(0, Math.floor(viewTop) - 2);
+    var terrainW = Math.min(RZ.WORLD_W - terrainX, Math.ceil(viewW) + 4);
+    var terrainH = Math.min(RZ.WORLD_H - terrainY, Math.ceil(viewH) + 4);
+    if (terrainW > 0 && terrainH > 0) {
+      ctx.drawImage(this.terrain.canvas, terrainX, terrainY, terrainW, terrainH,
+        terrainX, terrainY, terrainW, terrainH);
+    }
 
     // 水下 / 熔岩氛围
     if (this.map.haze) {
       ctx.fillStyle = this.map.haze;
-      ctx.fillRect(-400, -400, RZ.WORLD_W + 800, RZ.WORLD_H + 800);
+      ctx.fillRect(viewLeft - 2, viewTop - 2, viewW + 4, viewH + 4);
     }
 
     var i;
-    for (i = 0; i < this.supplies.length; i++) RZ.drawSupply(ctx, this.supplies[i], this.t);
+    for (i = 0; i < this.supplies.length; i++) {
+      var supply = this.supplies[i];
+      if (supply.x >= bounds.x0 && supply.x <= bounds.x1 && supply.y >= bounds.y0 && supply.y <= bounds.y1) {
+        RZ.drawSupply(ctx, supply, this.t);
+      }
+    }
 
     var viewer = this.viewerTeam();
     for (i = 0; i < this.units.length; i++) {
       var u = this.units[i];
       if (!u.alive || this.hiddenFrom(viewer, u)) continue;   // 隐身：整辆车都不画
-      RZ.drawUnit(ctx, u, this.t, { active: u === this.active && this.result === null });
+      if (u.x >= bounds.x0 && u.x <= bounds.x1 && u.y >= bounds.y0 && u.y <= bounds.y1) {
+        RZ.drawUnit(ctx, u, this.t, { active: u === this.active && this.result === null, lowQuality: this.lowQuality });
+      }
     }
 
     // 只提示炮口指向，不预测落点——预测线会随蓄力乱跳，反而干扰手感
-    if (this.guide && this.phase === 'aim' && this.active && !this.active.ai) {
+    if (this.guide && this.phase === 'aim' && this.active && !this.active.ai &&
+        (this.opts.localPlayerId == null || this.active.playerId === this.opts.localPlayerId)) {
       RZ.drawAimRay(ctx, this.active, RZ.TEAM_COLORS[this.active.team]);
     }
 
-    for (i = 0; i < this.projectiles.length; i++) RZ.drawProjectile(ctx, this.projectiles[i], this.t);
+    for (i = 0; i < this.projectiles.length; i++) {
+      var projectile = this.projectiles[i];
+      if (projectile.x >= bounds.x0 - 160 && projectile.x <= bounds.x1 + 160 &&
+          projectile.y >= bounds.y0 - 160 && projectile.y <= bounds.y1 + 160) {
+        RZ.drawProjectile(ctx, projectile, this.t, this.lowQuality);
+      }
+    }
     for (i = 0; i < this.effects.length; i++) {
       var e = this.effects[i];
-      if (e.type === 'bolt') RZ.drawBolt(ctx, e.x, e.y0, e.y1, e.life);
+      if (e.type === 'bolt' && e.x >= bounds.x0 && e.x <= bounds.x1) {
+        RZ.drawBolt(ctx, e.x, e.y0, e.y1, e.life, this.lowQuality);
+      }
     }
 
-    this.fx.draw(ctx);
-    this.fx.drawTexts(ctx);
+    this.fx.draw(ctx, bounds);
+    this.fx.drawTexts(ctx, bounds);
 
     // 屏幕外战车的方向指示
     for (i = 0; i < this.units.length; i++) {
@@ -1017,6 +1096,147 @@
     }
 
     ctx.restore();
+  };
+
+  // ---- 联机协议适配 --------------------------------------------------
+  Game.prototype.markNetwork = function (kind) {
+    if (kind === 'full' || this.networkDirty !== 'full') this.networkDirty = kind || 'light';
+  };
+
+  Game.prototype.emitNetwork = function (event, data) {
+    if (this.networkEvent) this.networkEvent(event, data || {});
+  };
+
+  /** 权威端唯一的远端 Action 入口；先核验玩家、回合和阶段，再调用原有规则方法。 */
+  Game.prototype.applyNetworkAction = function (playerId, message) {
+    var u = this.active;
+    if (this.result !== null || !u || !u.alive || u.playerId !== playerId || u.ai || this.phase !== 'aim') return false;
+    var action = message && message.action;
+    if (action === 'MOVE') {
+      var x0 = u.x, f0 = u.fuel, face0 = u.face;
+      var moveDir = message.direction === 'left' ? -1 : message.direction === 'right' ? 1 : 0;
+      var moveSteps = Number.isInteger(message.steps) ? Math.max(1, Math.min(4, message.steps)) : 1;
+      for (var moveNo = 0; moveNo < moveSteps; moveNo++) this.moveActive(moveDir);
+      return u.x !== x0 || u.fuel !== f0 || u.face !== face0;
+    }
+    if (action === 'SET_ANGLE') {
+      var angle = Number(message.value);
+      if (!Number.isFinite(angle) || angle < -25 || angle > 90) return false;
+      u.aim = angle; this.markNetwork('light'); return true;
+    }
+    if (action === 'SELECT_WEAPON') {
+      var idx = Number(message.weapon), old = u.weaponIdx;
+      if (idx !== 0 && idx !== 1 && idx !== 2) return false;
+      this.setWeapon(idx); return u.weaponIdx === idx || old === idx;
+    }
+    if (action === 'FIRE') {
+      var power = Number(message.power), fireAngle = Number(message.angle), weapon = Number(message.weapon);
+      if (!Number.isFinite(power) || power < 4 || power > 100 || !Number.isFinite(fireAngle) || fireAngle < -25 || fireAngle > 90) return false;
+      if (weapon !== 0 && weapon !== 1 && weapon !== 2) return false;
+      var chosen = weapon === 0 ? u.vehicle.w1 : weapon === 1 ? u.vehicle.w2 : u.vehicle.ss;
+      if (!u.canAfford(u.shotMode === 'fly' ? RZ.LOCATOR : u.shotMode === 'stun' ? RZ.STUN_SHELL : chosen)) return false;
+      u.aim = fireAngle; u.weaponIdx = weapon; u.power = power;
+      this.charging = true; this.fire(); return this.phase === 'fly';
+    }
+    if (action === 'USE_ITEM') return this.useItem(Number(message.itemIndex));
+    if (action === 'END_TURN') { this.passTurn(); return this.phase === 'settle'; }
+    return false;
+  };
+
+  function weaponNameOf(p) { return p && p.w ? p.w.name : ''; }
+  function weaponByName(unit, name) {
+    var list = unit ? [unit.vehicle.w1, unit.vehicle.w2, unit.vehicle.ss] : [];
+    list.push(RZ.LOCATOR, RZ.STUN_SHELL);
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].name === name) return list[i];
+    for (i = 0; i < RZ.VEHICLES.length; i++) {
+      var v = RZ.VEHICLES[i], all = [v.w1, v.w2, v.ss];
+      for (var k = 0; k < all.length; k++) if (all[k].name === name) return all[k];
+    }
+    return RZ.VEHICLES[0].w1;
+  }
+
+  Game.prototype.visibleStateForPlayer = function (playerId, includeTerrain) {
+    var self = this, viewer = null;
+    for (var q = 0; q < this.units.length; q++) if (this.units[q].playerId === playerId) viewer = this.units[q];
+    var viewerTeam = viewer ? viewer.team : playerId - 1;
+    var units = this.units.map(function (u) {
+      var own = u.playerId === playerId, hidden = self.hiddenFrom(viewerTeam, u);
+      return {
+        index: u.index, playerId: u.playerId, vehicleId: u.vehicle.id, name: u.name, team: u.team,
+        hp: u.hp, maxHp: u.maxHp, fuel: own ? u.fuel : null, maxFuel: u.maxFuel,
+        spentThisTurn: own ? u.spentThisTurn : 0, moveSpent: own ? u.moveSpent : 0, dealtThisTurn: own ? u.dealtThisTurn : 0,
+        x: hidden ? u.lastSeenX : u.x, y: hidden ? u.lastSeenY : u.y, vy: hidden ? 0 : u.vy,
+        face: u.face, aim: own ? u.aim : Math.round(u.aim / 5) * 5,
+        power: own ? u.power : 0, lastPower: own ? u.lastPower : 0,
+        weaponIdx: own ? u.weaponIdx : 0,
+        items: own ? u.items.slice() : null, itemCount: u.items.length,
+        buffDouble: own ? u.buffDouble : false, buffPower: own ? u.buffPower : (u.buffPower > 0 ? 1 : 0),
+        shotMode: own ? u.shotMode : null, stunned: u.stunned, stealth: u.stealth,
+        noFire: own ? u.noFire : false, dots: u.dots.map(function (d) { return { type: d.type, turns: d.turns, damage: d.damage }; }),
+        alive: u.alive, airborne: u.airborne, fallFrom: u.fallFrom,
+        hitFlash: u.hitFlash, muzzleFlash: u.muzzleFlash, usedItemFlash: u.usedItemFlash
+      };
+    });
+    var state = {
+      version: ++this.networkVersion, gameMode: 'lan1v1', mapId: this.map.id, night: this.night,
+      units: units, activeIndex: this.active ? this.active.index : -1,
+      currentPlayerId: this.active ? this.active.playerId : null,
+      wind: this.wind, round: this.round, turnNo: this.turnNo, phase: this.phase,
+      timeLeft: this.timeLeft, charging: ownActive(this, playerId), result: this.result,
+      projectiles: this.projectiles.map(function (p) {
+        return { x: p.x, y: p.y, vx: p.vx, vy: p.vy, weaponName: weaponNameOf(p), ownerIndex: p.owner ? p.owner.index : -1,
+          team: p.team, age: p.age, alive: p.alive, bounceLeft: p.bounceLeft, pierceLeft: p.pierceLeft,
+          didSplit: p.didSplit, dmgMul: p.dmgMul || 1, trail: p.trail ? p.trail.slice(-80) : [] };
+      }),
+      supplies: this.supplies.map(function (s) { return { x: s.x, y: s.y, vy: s.vy, itemId: s.def.id, landed: s.landed }; }),
+      effects: this.effects.map(function (e) { return { type: e.type, x: e.x, y0: e.y0, y1: e.y1, life: e.life }; }),
+      messages: this.messages.map(function (m) { return { text: m.text, color: m.color, life: m.life }; })
+    };
+    if (includeTerrain) state.terrainRle = this.terrain.exportMaskRLE();
+    return state;
+  };
+
+  function ownActive(game, playerId) {
+    return !!game.active && game.active.playerId === playerId && game.charging;
+  }
+
+  /** 镜像端只应用权威状态，不运行规则更新。 */
+  Game.prototype.applyVisibleState = function (state) {
+    if (!state || state.mapId !== this.map.id || !state.units || state.units.length !== this.units.length) return false;
+    if (state.version != null && this.networkVersion > state.version) return false;
+    this.networkVersion = state.version || this.networkVersion;
+    var fields = ['hp','maxHp','maxFuel','spentThisTurn','moveSpent','dealtThisTurn','x','y','vy','face','aim','power','lastPower','weaponIdx',
+      'buffDouble','buffPower','shotMode','stunned','stealth','noFire','alive','airborne','fallFrom','hitFlash','muzzleFlash','usedItemFlash'];
+    for (var i = 0; i < state.units.length; i++) {
+      var src = state.units[i], u = this.units[i];
+      for (var f = 0; f < fields.length; f++) if (src[fields[f]] != null) u[fields[f]] = src[fields[f]];
+      if (src.fuel != null) u.fuel = src.fuel;
+      if (src.items) u.items = src.items.slice();
+      else if (src.itemCount != null) {
+        u.items = [];
+        for (var itemNo = 0; itemNo < src.itemCount; itemNo++) u.items.push(null);
+      }
+      u.dots = (src.dots || []).map(function (d) { return { type: d.type, turns: d.turns, damage: d.damage }; });
+    }
+    this.active = state.activeIndex >= 0 ? this.units[state.activeIndex] : null;
+    this.wind = state.wind; this.round = state.round; this.turnNo = state.turnNo;
+    this.phase = state.phase; this.timeLeft = state.timeLeft; this.charging = !!state.charging;
+    this.result = state.result; this.night = state.night;
+    if (state.terrainRle && !this.terrain.importMaskRLE(state.terrainRle)) return false;
+    var self = this;
+    this.projectiles = (state.projectiles || []).map(function (p) {
+      var owner = p.ownerIndex >= 0 ? self.units[p.ownerIndex] : null;
+      return { x: p.x, y: p.y, vx: p.vx, vy: p.vy, w: weaponByName(owner, p.weaponName), owner: owner,
+        team: p.team, age: p.age, alive: p.alive, bounceLeft: p.bounceLeft, pierceLeft: p.pierceLeft,
+        didSplit: p.didSplit, dmgMul: p.dmgMul, trail: p.trail || [] };
+    });
+    this.supplies = (state.supplies || []).map(function (s) {
+      return { x: s.x, y: s.y, vy: s.vy, def: RZ.itemById(s.itemId), landed: s.landed };
+    });
+    this.effects = state.effects || [];
+    this.messages = state.messages || [];
+    this.updateCamera();
+    return true;
   };
 
   RZ.Game = Game;
