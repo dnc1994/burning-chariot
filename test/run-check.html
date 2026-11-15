@@ -54,7 +54,7 @@ document.getElementById('f').onload = function () {
       g.active.lastPower = 58;                    // 上一发 58，这一发标到 64：细线 + 粗线都该看得到
       g.setMark(64);
       g.startCharge();
-      for (i = 0; i < 70; i++) g.update(16);      // 蓄到标记处，正停在上面
+      for (i = 0; i < 64; i++) g.update(16);      // 正好蓄到标记上
       g.banner = { text: '直击！', sub: '+5 金', life: 60, max: 70 };
     }
     if (stage === 'field') {                      // 四种区域一字排开 + 一块 Boss 警戒线，镜头对着玩家

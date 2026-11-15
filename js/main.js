@@ -521,7 +521,7 @@
       var marked = h.mark !== null && h.mark !== undefined;
       var at = marked ? h.mark : h.lastPower;
       setClass('power-bar', 'markable', marked && h.live);
-      setClass('power-bar', 'onmark', marked && h.live && game.charging && h.unit.markHold > 0);
+      setClass('power-bar', 'onmark', marked && h.live && game.charging && Math.abs(h.unit.power - h.mark) < 1.5);
       setHidden('power-mark', !(at > 0));
       if (at > 0) setStyle('power-mark', 'left', at + '%');
       var showLast = marked && h.lastPower > 0 && h.lastPower !== h.mark;

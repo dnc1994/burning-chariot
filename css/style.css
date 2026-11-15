@@ -334,8 +334,7 @@ h1, h2, h3, h4 { font-family: var(--display); font-weight: 400; }
 /* 爽快规则下蓄力条可以点：点哪标哪 */
 .power-bar.markable { pointer-events: auto; cursor: pointer; touch-action: none; }
 .power-bar.markable::before { content: ""; position: absolute; inset: -12px -6px; }   /* 把可点的范围放大一圈 */
-/* 标记到位、正停在上面：外面套一圈纸色框、标记变红（硬切，不做过渡） */
-.power-bar.onmark { outline: 4px solid var(--paper); }
+/* 蓄力条正好走到标记上：标记变红（硬切，不做过渡）。只是提示，条不会停 */
 .power-bar.onmark .power-mark { background: var(--red); }
 /* 上一发实际打出去的力度（和标记不一样时才显示）：一根细墨线 */
 .power-last {

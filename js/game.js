@@ -16,7 +16,6 @@
     startFuel: 60,             // 开局就摸得到二号武器，三四回合一发必杀
     regenMul: 1.6,
     charge: 1.0,               // 满条约 1.7 秒。1.3 太快：一帧就是 1.3 点力度，落点差出几十像素
-    markHold: 20,              // 蓄到标记处停顿的帧数（约 1/3 秒）：这时松手就是标记的力度，分毫不差
     markDefault: 55,           // 还没打过、也没标过时，预览线按这个力度画
     aiWait: 12,
     settle: 20,
@@ -77,7 +76,6 @@
     this.lastSeenX = 0; this.lastSeenY = 0;   // 隐身前最后被看到的位置
     this.lastPower = 0;          // 上一发用的力度，作为蓄力条上的参考刻度
     this.markPower = 0;          // 玩家在蓄力条上标的力度（爽快规则）；0 = 没标，跟着上一发走
-    this.markHold = 0;           // 蓄力蓄到标记处时的停顿，还剩几帧
     this.weaponIdx = 0;
     this.delay = 0;              // 上一次出手的延迟值，只用来排下一轮的先后
     // 位次用负的 index 起头：开局第一轮仍按出场顺序，之后才轮到「上轮靠后者先动」
@@ -778,7 +776,7 @@
     if (!this.arc || this.hardcore || !this.guide) return null;
     if (!u || u.ai || this.phase !== 'aim' || u.noFire) return null;
     // 始终按标记的力度画，蓄力时也不跟着条走：线是「目标」，条是「现在」，
-    // 蓄到标记处松手，打出去的就是这条线（见 update 里的 markHold）。
+    // 蓄到标记处松手，打出去的就是这条线。
     var power = this.markOf(u);
     var mode = u.shotMode;
     var w = mode === 'fly' ? RZ.LOCATOR : mode === 'stun' ? RZ.STUN_SHELL : u.weapon();
@@ -1015,7 +1013,6 @@
     if (!this.active || this.phase !== 'aim' || this.charging) return;
     this.charging = true;
     this.active.power = 0;
-    this.active.markHold = 0;
     RZ.SFX.startCharge();
   };
 
@@ -1061,15 +1058,11 @@
       var cu = this.active;
       var rate = this.arc ? this.arc.charge : CHARGE_RATE;
       var mk = cu.ai ? null : this.markOf(cu);
-      if (cu.markHold > 0) {
-        cu.markHold--;                       // 停在标记上：这几帧里松手，力度就是标记值
-      } else if (mk !== null && cu.power < mk && cu.power + rate >= mk) {
-        cu.power = mk;
-        cu.markHold = this.arc.markHold;
-        RZ.SFX.tick();                       // 「到了」——不盯着条也听得出来
-      } else {
-        cu.power = Math.min(100, cu.power + rate);
-      }
+      // 蓄力条永远匀速走，绝不在标记上停顿或吸附：玩家不想用标记时，
+      // 标记附近的每一点力度都得照样按得出来（试过停 1/3 秒，等于把那一段锁死了）。
+      // 越过标记只响一声梆子当提示。
+      if (mk !== null && cu.power < mk && cu.power + rate >= mk) RZ.SFX.tick();
+      cu.power = Math.min(100, cu.power + rate);
       RZ.SFX.updateCharge(cu.power);
     }
 

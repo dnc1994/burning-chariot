@@ -193,17 +193,20 @@ module.exports = function runModeTests(RZ, check, head) {
     check(far[far.length - 2] - line[line.length - 2] > 100, '标记不同，预览线跟着变');
     u.markPower = 62;
 
-    // 蓄力：到标记处停一下，停顿期间松手就是标记值
+    // 蓄力：匀速走过标记，不停顿不吸附；正好在标记上松手，打出去的就是标记值
     g.startCharge();
-    let n = 0, held = 0;
-    while (u.power < 62 && n++ < 200) g.update(16);
-    for (let i = 0; i < 10; i++) { g.update(16); if (u.power === 62) held++; }
-    check(u.power === 62 && held === 10, '蓄到标记处会停住', `${n} 帧到位，之后 10 帧力度 ${u.power}`);
+    const seen = [];
+    for (let i = 0; i < 70; i++) { g.update(16); seen.push(u.power); }
+    const steps = seen.slice(1).map((v, i) => v - seen[i]);
+    check(seen[69] > 62 && Math.max(...steps) - Math.min(...steps) < 1e-9, '蓄力条匀速走过标记，不停顿不吸附', `70 帧 → ${seen[69]}`);
     const during = g.previewPath();
     check(during.length === line.length && during[during.length - 2] === line[line.length - 2], '蓄力过程中预览线不动');
+    g.cancelCharge();
+    g.startCharge();
+    while (u.power < 62) g.update(16);
     g.releaseCharge();
     const shot = g.projectiles[0];
-    check(u.lastPower === 62, '停顿时松手，打出去的正是标记的力度', `${u.lastPower}`);
+    check(u.lastPower === 62, '在标记上松手，打出去的正是标记的力度', `${u.lastPower}`);
     // 预览跑的是同一套物理：实际弹道逐点重合
     let worst = 0;
     const env = { terrain: g.terrain, gravity: g.map.gravity, wind: g.wind, recordTrail: false, spawn: [], units: g.units };
@@ -221,7 +224,7 @@ module.exports = function runModeTests(RZ, check, head) {
     g.setMark(30);
     g.startCharge();
     for (let i = 0; i < 80; i++) g.update(16);
-    check(u.power > 50, '停顿过后继续往上蓄', `${u.power}`);
+    check(u.power > 50, '越过标记继续往上蓄', `${u.power}`);
     g.cancelCharge();
     check(u.markPower === 30, '标记留着，下一发还在');
     g.startCharge();
