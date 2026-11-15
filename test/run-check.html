@@ -33,12 +33,13 @@ document.getElementById('f').onload = function () {
   }
 
   var s = Run.newRun('liehuo');
-  s.relics = ['crit', 'after', 'tank']; s.mods.w1 = ['split', 'cluster']; s.mods.ss = ['burn']; s.gold = 135; s.hp = 640;
+  // 带一对凑成的联动（余震装置 + 爆破专家）和一件诅咒（赌徒骰子），侧栏上三种遗物条都看得到
+  s.relics = ['crit', 'after', 'demo', 'dice']; s.mods.w1 = ['split', 'cluster']; s.mods.ss = ['burn']; s.gold = 135; s.hp = 640;
   if (stage === 'reward') { Run.enter(s, 0); s.pending = { kind: 'reward', from: 'fight', gold: 48, style: 13,
-    choices: [{ type: 'mod', id: 'apex' }, { type: 'relic', id: 'combo' }, { type: 'relic', id: 'plate' }] }; }
+    choices: [{ type: 'mod', id: 'chain' }, { type: 'relic', id: 'combo' }, { type: 'relic', id: 'plate' }] }; }
   if (stage === 'shop') { s.step = 2; Run.enter(s, 1); }
   if (stage === 'rest') { s.step = 2; Run.enter(s, 2); }
-  if (stage === 'event') { s.pending = { kind: 'event', id: 'tuner' }; }
+  if (stage === 'event') { s.gold = 20; s.pending = { kind: 'event', id: 'convoy' }; }   // 钱不够，第一个选项灰掉
   if (stage === 'over') { s.battles = 7; s.bosses = 1; s.act = 1; s.step = 3; Run.finish(s, false); }
   if (stage === 'boss' || stage === 'bossfight') { s.step = 4; }
   RZ.RunUI._set(s);

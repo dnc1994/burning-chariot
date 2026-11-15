@@ -689,14 +689,352 @@ module.exports = function runModeTests(RZ, check, head) {
     const s = Run.newRun('liehuo'); s.hp = 300; s.step = 2;
     Run.enter(s, 2);
     check(Run.rest(s, 'repair') && s.hp === 300 + 344, '修整回 40% 耐久', `${s.hp}`);
+    // 每个事件的每个选项：家底厚的时候都能选，选完状态还是合法的纯 JSON
+    const rich = () => {
+      const t = Run.newRun('liehuo');
+      t.gold = 500; t.relics = ['turbo', 'after', 'leaky']; t.mods.w1 = ['heavy']; t.items = ['heal1'];
+      return t;
+    };
+    let fightsFromEvents = 0;
     for (const ev of Run.EVENTS) {
+      check(ev.options.some((o) => !o.need), `事件「${ev.title}」至少有一个不设门槛的选项（不会卡住）`);
       for (let k = 0; k < ev.options.length; k++) {
-        const t = Run.newRun('liehuo');
+        const t = rich();
         t.pending = { kind: 'event', id: ev.id };
-        const ok = Run.eventChoose(t, k) && t.pending.kind === 'note' && t.pending.text.length > 0 && t.hp >= 1;
-        check(ok && Run.leave(t) && t.step === 1, `事件「${ev.title}」选项 ${k + 1}`);
+        const r = Run.eventChoose(t, k);
+        let ok;
+        if (r === 'fight') {
+          fightsFromEvents++;
+          const g = new RZ.Game(Run.battleOpts(t));
+          ok = !t.pending && t.node && t.node.enemies.length > 0 && g.units.length >= 2;
+        } else {
+          ok = r === true && t.pending.kind === 'note' && t.pending.text.length > 0 && t.hp >= 1 && Run.leave(t) && t.step === 1;
+        }
+        const clean = JSON.stringify(t) === JSON.stringify(JSON.parse(JSON.stringify(t)));
+        check(ok && clean, `事件「${ev.title}」选项 ${k + 1}`);
       }
     }
+    check(fightsFromEvents >= 1, '有事件会转成一场战斗');
+  }
+
+  // ================= v1.3 流派成型 =================
+  head('v1.3：战车被动');
+  {
+    check(RZ.VEHICLES.every((v) => Run.passiveOf(v.id) && Run.passiveOf(v.id).desc), '十辆车每辆都有远征被动');
+    const pk = (vid) => Run.perks(Run.newRun(vid));
+    check(pk('honglong').bloodlust === 1 && pk('aodin').anchor === 1, '被动并进 Run.perks');
+    check(mk().units[0].perks.variety === undefined, '经典对局里没有被动');
+
+    // 烈火：换手 +25%
+    {
+      const g = arena({ perks: { variety: 0.25 } });
+      const u = g.units[0];
+      const a = g.perkMul(u, 0), b = g.perkMul(u, 0), c = g.perkMul(u, 1);
+      check(a === 1 && b === 1 && Math.abs(c - 1.25) < 1e-9, '烈火「多面手」：换一把武器才 +25%', `${a} ${b} ${c}`);
+    }
+    // 红龙：击破回血 + 下一发 +40%
+    {
+      const g = arena({ perks: { bloodlust: 1 } });
+      const me = g.units[0], foe = g.units[1];
+      me.hp = me.maxHp * 0.5;
+      g.damage(foe, 99999, me);
+      check(foe.alive === false && Math.round(me.hp) === Math.round(me.maxHp * 0.65), '红龙「嗜血」：击破回 15% 耐久', `${Math.round(me.hp)}`);
+      check(Math.abs(g.perkMul(me, 0) - 1.4) < 1e-9 && g.perkMul(me, 0) === 1, '下一发 +40%，只管一发');
+    }
+    // 铁金刚：没挪窝就架盾
+    {
+      const g = arena({ perks: { brace: 0.3 } });
+      const me = g.units[0];
+      g.active = me; me.moveSpent = 0; g.endTurn();
+      const hp0 = me.hp;
+      g.damage(me, 100, g.units[1]);
+      check(me.braced && Math.round(hp0 - me.hp) === 70, '铁金刚「铁壁」：一步没挪，少吃 30%', `-${Math.round(hp0 - me.hp)}`);
+      g.arcadeTurnStart(me);
+      check(!me.braced, '再轮到自己时盾就放下了');
+      g.active = me; me.moveSpent = 3; g.endTurn();
+      check(!me.braced, '挪过就不架盾');
+    }
+    // 贝贝龙：多发武器多一发
+    {
+      const v = Run.playerVehicle(Run.newRun('beibeilong'));
+      check(v.w2.count === V('beibeilong').w2.count + 1 && v.w1.count === V('beibeilong').w1.count, '贝贝龙「一窝蛋」：散射多一发，单发不变', `${v.w2.count}`);
+      check(V('beibeilong').w2.count === 5, '原始数据没被改');
+    }
+    // 毒蜘蛛：带持续伤害时 +30%
+    {
+      const g = arena({ perks: { corrode: 0.3 } });
+      const me = g.units[0], foe = g.units[1];
+      let h = foe.hp; g.damage(foe, 100, me); const plain = h - foe.hp;
+      foe.dots.push({ type: 'poison', turns: 2, damage: 10 });
+      h = foe.hp; g.damage(foe, 100, me); const hurt = h - foe.hp;
+      check(plain === 100 && hurt === 130, '毒蜘蛛「蚀甲」：目标中毒时 +30%', `${plain} → ${hurt}`);
+    }
+    // 旋风：风影响减半，满风 +30%
+    {
+      const v = Run.playerVehicle(Run.newRun('xuanfeng'));
+      check(v.w1.windMul === (V('xuanfeng').w1.windMul == null ? 1 : V('xuanfeng').w1.windMul) * 0.5, '旋风「乘风」：受风影响减半');
+      const g = mk({ arcade: true, barrels: 0, mapId: 'dry' }, { perks: { windRider: 0.3 } });
+      g.wind = g.map.windMax;
+      check(Math.abs(g.perkMul(g.units[0], 0) - 1.3) < 1e-9, '满风伤害 +30%');
+    }
+    // 托尔：第三发引雷
+    {
+      const g = arena({ perks: { thunderEvery: 3 } });
+      const me = g.units[0];
+      for (let n = 0; n < 3; n++) {
+        g.active = me; g.phase = 'aim'; me.fuel = 200; me.aim = 50; me.power = 60;
+        g.fire();
+        settle(g, 300);
+      }
+      check(me.shotsFired === 3, '托尔「雷鸣」：数着开火次数');
+      const g2 = arena({ perks: { thunderEvery: 3 } });
+      const u2 = g2.units[0], f2 = g2.units[1];
+      g2.thunderFor = u2;
+      const hp0 = f2.hp;
+      g2.explode(f2.x + 300, f2.y - 5, V('tuoer').w1, u2, null, 1);
+      check(g2.effects.some((e) => e.type === 'bolt') && g2.thunderFor === null, '第三发的落点引下落雷');
+      check(f2.hp === hp0, '落雷只劈落点那一列，打不到别处的人');
+    }
+    // 赤焰：地火更久更烫，自己不怕火
+    {
+      const g = arena({ perks: { pyro: 1 } });
+      const me = g.units[0], foe = g.units[1];
+      g.addHazard('fire', foe.x, foe.y, 60, 2, 40, me);
+      const h = g.hazards[0];
+      check(h.rounds === 3 && h.power === 60, '赤焰「燎原」：自己留的地火多一轮、伤害 +50%', `${h.rounds} 轮 ${h.power}`);
+      g.addHazard('fire', me.x, me.y, 60, 2, 40, foe);
+      const hp0 = me.hp;
+      g.fieldTurnStart(me);
+      check(me.hp === hp0, '站在火里不受伤');
+    }
+    // 兰登：直击 +30%、回 8 油
+    {
+      const a = arena(), b = arena({ perks: { precise: 0.3 } });
+      [a, b].forEach((g) => { g.units[0].fuel = 50; g.explode(g.units[1].x, g.units[1].y - 14, V('landeng').w1, g.units[0], g.units[1], 1); });
+      const da = a.units[1].maxHp - a.units[1].hp, db = b.units[1].maxHp - b.units[1].hp;
+      check(db / da > 1.25 && db / da < 1.35 && b.units[0].fuel === 58, '兰登「精准」：直击再 +30%，回 8 点燃料', `${Math.round(da)} → ${Math.round(db)}`);
+    }
+    // 奥丁：坑大 40%、不被击飞
+    {
+      const solid = (t) => { let n = 0; for (let i = 0; i < t.mask.length; i++) n += t.mask[i]; return n; };
+      const a = arena(), b = arena({ perks: { dig: 0.4, anchor: 1 } });
+      const dug = [a, b].map((g) => { const y = g.terrain.groundBelow(1200, 0), n = solid(g.terrain); g.explode(1200, y, V('aodin').w1, g.units[0], null, 1); return n - solid(g.terrain); });
+      check(dug[1] > dug[0] * 1.6, '奥丁「镇地」：坑大一圈', `${dug[0]} → ${dug[1]} 像素`);
+    }
+  }
+
+  head('v1.3：联动遗物');
+  {
+    const s = Run.newRun('liehuo');
+    s.relics = ['after'];
+    check(Run.activeSynergies(s).length === 0, '只有一半时不生效');
+    s.relics.push('demo');
+    const pk = Run.perks(s);
+    check(Run.activeSynergies(s).map((x) => x.id).join() === 'chainblast' && Math.abs(pk.aftershock - 0.6) < 1e-9, '凑齐「余震装置 + 爆破专家」→「连环爆破」', `余震 ${pk.aftershock}`);
+    check(Run.SYNERGIES.every((sy) => sy.needs.every((id) => Run.relicById(id))), '每个联动的两半都是存在的遗物');
+    check(Run.synergiesOf('crit').length >= 2, '一件遗物可以参与好几个联动');
+    // 手里有一半时，另一半更容易抽到
+    Run.setRandom(null);
+    const count = (owned) => {
+      let n = 0;
+      for (let i = 0; i < 1500; i++) {
+        const t = Run.newRun('liehuo'); t.relics = owned.slice();
+        // 直接看奖励：普通战斗的三选一
+        t.pending = null; t.node = { type: 'fight', gold: 10 };
+        const g = { units: [{ alive: true, items: [], hp: 500 }], result: 0, style: { gold: 0 } };
+        Run.afterBattle(t, g);
+        if (t.pending.choices.some((x) => x.id === 'demo')) n++;
+      }
+      return n;
+    };
+    const base = count([]), boosted = count(['after']);
+    check(boosted > base * 1.8, '有「余震装置」时「爆破专家」出现得明显更多', `${base} → ${boosted} / 1500`);
+    // 首轮齐射 / 浴火重生 / 回收专家 / 狙击手
+    {
+      const g = arena({ perks: { ambushDouble: 1 } });
+      g.arcadeTurnStart(g.units[0]);
+      check(g.units[0].buffDouble === true, '「首轮齐射」：第一发自动双倍');
+      g.units[0].firstShot = false; g.units[0].buffDouble = false; g.arcadeTurnStart(g.units[0]);
+      check(g.units[0].buffDouble === false, '只管第一发');
+    }
+    {
+      const g = arena({ perks: { phoenix: 1 } });
+      const me = g.units[0]; me.reviveLeft = 1;
+      g.damage(me, 99999, g.units[1]);
+      check(me.alive && me.hp === me.maxHp, '「浴火重生」：应急核心直接满血复活');
+    }
+    {
+      const g = arena({ perks: { goldPerHit: 3 } });
+      g.explode(g.units[1].x, g.units[1].y - 14, V('liehuo').w1, g.units[0], g.units[1], 1);
+      check(g.style.gold >= 3, '「回收专家」：炸到敌人给金币', `${g.style.gold}`);
+    }
+    {
+      const a = arena(null, null, 1200), b = arena({ perks: { snipeCrit: 0.6 } }, null, 1200);
+      [a, b].forEach((g) => g.explode(g.units[1].x, g.units[1].y - 14, V('liehuo').w1, g.units[0], null, 1));
+      const da = a.units[1].maxHp - a.units[1].hp, db = b.units[1].maxHp - b.units[1].hp;
+      check(Math.abs(db / da - 1.6) < 0.05, '「狙击手」：1000px 外命中 ×1.6', `${Math.round(da)} → ${Math.round(db)}`);
+    }
+  }
+
+  head('v1.3：诅咒遗物');
+  {
+    const curseIds = Run.RELICS.filter((r) => r.rarity === 'curse').map((r) => r.id);
+    check(curseIds.length >= 5, '有一组诅咒遗物', curseIds.join(' '));
+    let leaked = 0;
+    for (let i = 0; i < 400; i++) {
+      const t = Run.newRun('liehuo');
+      t.node = { type: ['fight', 'elite', 'boss'][i % 3], gold: 10 };
+      Run.afterBattle(t, { units: [{ alive: true, items: [], hp: 500 }], result: 0, style: { gold: 0 } });
+      if (t.pending.choices.some((c) => c.type === 'relic' && curseIds.indexOf(c.id) >= 0)) leaked++;
+    }
+    check(leaked === 0, '诅咒遗物不会出现在战后奖励里');
+    const shop = Run.genStock(Run.newRun('liehuo'));
+    check(shop.filter((x) => x.black).length === 1 && curseIds.indexOf(shop.find((x) => x.black).id) >= 0, '商店的黑市角落有一件诅咒遗物');
+
+    // 血契弹匣：开火掉血但不致死
+    {
+      const g = arena({ perks: { selfHarm: 0.03 } });
+      const me = g.units[0];
+      g.active = me; g.phase = 'aim'; me.fuel = 100; me.aim = 50; me.power = 50;
+      const hp0 = me.hp; g.fire();
+      check(Math.round(hp0 - me.hp) === Math.round(me.maxHp * 0.03), '「血契弹匣」：开火失去 3% 最大耐久');
+      settle(g, 400);
+      me.hp = 5; g.active = me; g.phase = 'aim'; me.fuel = 100; g.fire();
+      check(me.alive && me.hp >= 1, '不会因此阵亡', `${me.hp}`);
+    }
+    {
+      const g = arena({ perks: { noStartFuel: 1, startFuel: 200 } });
+      check(g.units[0].fuel === 0, '「无底油箱」：开局燃料清零（连过载电容也盖不住）');
+    }
+    {
+      const g = arena({ perks: { crit: 0, dud: 0.2 } });
+      let duds = 0;
+      for (let i = 0; i < 400; i++) if (g.perkMul(g.units[0], 0) < 0.5) duds++;
+      check(duds > 50 && duds < 120, '「赌徒骰子」：大约两成哑火', `${duds} / 400`);
+    }
+    {
+      const g = arena({ perks: { armor: -0.2 } });
+      const hp0 = g.units[0].hp; g.damage(g.units[0], 100, g.units[1]);
+      check(Math.round(hp0 - g.units[0].hp) === 120, '「贪婪之心」：受到的伤害 +20%');
+    }
+    {
+      const g = arena({ perks: { blind: 1 } }), h = arena(), k = arena({ perks: { blind: 1, scope: 1 } });
+      [g, h, k].forEach((x) => { x.active = x.units[0]; x.phase = 'aim'; x.units[0].aim = 50; });
+      const a = g.previewPath().length, b = h.previewPath().length, c = k.previewPath().length;
+      check(a < b * 0.5 && Math.abs(c - b) <= 2, '「短视镜片」：预览只剩一小段；带测距仪等于抵消', `${a} / ${b} / ${c}`);
+    }
+    // 铅制装甲：拿到加血，净化时退回
+    {
+      const t = Run.newRun('liehuo');
+      const base = Run.maxHp(t);
+      t.pending = { kind: 'shop', stock: [{ type: 'relic', id: 'lead', cost: 0 }] };
+      Run.buy(t, 0);
+      check(Run.maxHp(t) === base + 350 && Run.playerVehicle(t).moveCost === V('liehuo').moveCost * 2, '「铅制装甲」：+350 耐久、移动耗油翻倍');
+      t.pending = { kind: 'rest' };
+      const opts = Run.restOptions(t).map((o) => o.id);
+      check(opts.indexOf('purify') >= 0, '手里有诅咒时，修整多一个「净化」');
+      check(Run.rest(t, 'purify') && t.relics.indexOf('lead') < 0 && Run.maxHp(t) === base && t.hp <= base, '净化拆掉诅咒，连它加的耐久一起退回');
+      t.pending = { kind: 'rest' };
+      check(Run.restOptions(t).every((o) => o.id !== 'purify') && Run.rest(t, 'purify') === false, '没有诅咒就没有净化');
+    }
+  }
+
+  head('v1.3：稀有改造');
+  {
+    const rare = Run.modPool(true).map((m) => m.id);
+    check(rare.length >= 5, '有一组稀有改造', rare.join(' '));
+    let eliteHas = 0, fightHas = 0;
+    for (let i = 0; i < 300; i++) {
+      const t = Run.newRun('liehuo');
+      t.node = { type: 'elite', gold: 10 };
+      Run.afterBattle(t, { units: [{ alive: true, items: [], hp: 500 }], result: 0, style: { gold: 0 } });
+      if (t.pending.choices.some((c) => c.type === 'mod' && rare.indexOf(c.id) >= 0)) eliteHas++;
+      const f = Run.newRun('liehuo');
+      f.node = { type: 'fight', gold: 10 };
+      Run.afterBattle(f, { units: [{ alive: true, items: [], hp: 500 }], result: 0, style: { gold: 0 } });
+      if (f.pending.choices.some((c) => c.type === 'mod' && rare.indexOf(c.id) >= 0)) fightHas++;
+    }
+    check(eliteHas === 300 && fightHas > 10 && fightHas < 70, '精英战必给一件稀有改造，普通战斗偶尔掉', `精英 ${eliteHas} / 普通 ${fightHas}`);
+    // 连锁闪电
+    {
+      const g = new RZ.Game({ mapId: 'dry', arcade: true, barrels: 0, humanTeam: 0, roster: [
+        { vehicle: V('liehuo'), team: 0, ai: false, name: 'a' },
+        { vehicle: V('honglong'), team: 1, ai: true, name: 'b' },
+        { vehicle: V('tuoer'), team: 1, ai: true, name: 'c' }] });
+      const floor = flatten(g); g.wind = 0;
+      [400, 1000, 1400].forEach((x, i) => { const u = g.units[i]; u.x = x; u.y = floor; u.airborne = false; });
+      const w = Run.modWeapon(V('liehuo').w1, ['chain']);
+      const far = g.units[2], hp0 = far.hp;
+      g.explode(g.units[1].x, g.units[1].y - 14, w, g.units[0], g.units[1], 1);
+      check(far.hp < hp0 && g.effects.some((e) => e.type === 'zap'), '「连锁闪电」：跳到 400px 外的另一个敌人', `-${Math.round(hp0 - far.hp)}`);
+    }
+    // 引力坍缩
+    {
+      const g = arena(null, null, 600);
+      const foe = g.units[1], x0 = foe.x;
+      g.explode(foe.x - 30, foe.y - 10, Run.modWeapon(V('liehuo').w1, ['gravity']), g.units[0], null, 1);
+      settle(g, 120);
+      check(foe.x < x0 - 5, '「引力坍缩」：往爆心吸，不是往外推', `${x0} → ${Math.round(foe.x)}`);
+      const h = arena(null, null, 600), x1 = h.units[1].x;
+      h.explode(h.units[1].x - 30, h.units[1].y - 10, V('liehuo').w1, h.units[0], null, 1);
+      settle(h, 120);
+      check(h.units[1].x > x1, '没装的照样往外推');
+    }
+    // 子母弹头
+    {
+      const w = Run.modWeapon(V('liehuo').w1, ['mirv']);
+      const g = arena();
+      g.explode(1500, g.terrain.groundBelow(1500, 0), w, g.units[0], null, 1);
+      const kids = g.projectiles.filter((p) => p.w.isChild);
+      check(kids.length === 5 && Math.abs(kids[0].w.damage - w.damage * 0.5) < 1, '「子母弹头」：撒 5 颗、每颗半个母弹', `${kids.length} 颗`);
+    }
+    // 电磁脉冲：Boss 不吃
+    {
+      const w = Run.modWeapon(V('liehuo').w1, ['shock']);
+      const g = arena();
+      g.explode(g.units[1].x, g.units[1].y - 14, w, g.units[0], g.units[1], 1);
+      check(g.units[1].stunned === 1, '「电磁脉冲」：炸到就麻痹一回合');
+      const b = arena(null, { kit: 'crusher', boss: true });
+      b.explode(b.units[1].x, b.units[1].y - 14, w, b.units[0], b.units[1], 1);
+      check(!b.units[1].stunned, 'Boss 不吃麻痹');
+    }
+  }
+
+  head('v1.3：商店刷新与事件');
+  {
+    const s = Run.newRun('liehuo'); s.gold = 100; s.step = 2;
+    Run.enter(s, 1);
+    const before = JSON.stringify(s.pending.stock);
+    check(Run.rerollCost(s) === 15 && Run.reroll(s) && s.gold === 85, '刷新货架：第一次 15 金币');
+    check(Run.rerollCost(s) === 25 && Run.reroll(s) && s.gold === 60 && Run.rerollCost(s) === 35, '每刷一次贵 10');
+    check(JSON.stringify(s.pending.stock) !== before, '货架真的换了');
+    s.gold = 10;
+    check(Run.reroll(s) === false && s.gold === 10, '钱不够刷不了');
+    check(Run.EVENTS.length >= 20, '事件扩到 20 个左右', `${Run.EVENTS.length} 个`);
+    const t = Run.newRun('liehuo');
+    const seen = new Set();
+    for (let i = 0; i < Run.EVENTS.length; i++) {
+      t.pending = null; t.layers[t.step] = [{ type: 'event' }];
+      Run.enter(t, 0); seen.add(t.pending.id);
+    }
+    check(seen.size === Run.EVENTS.length, '一局里事件不重样，全见过一遍才会重复', `${seen.size} / ${Run.EVENTS.length}`);
+    const poor = Run.newRun('liehuo'); poor.gold = 0; poor.relics = []; poor.items = [];
+    poor.pending = { kind: 'event', id: 'foundry' };
+    check(Run.eventChoose(poor, 0) === false && Run.eventChoose(poor, 1) === false && poor.pending.kind === 'event', '条件不够的选项选不了（没遗物熔、没钱修）');
+    // 赏金公告：下一场金币翻倍，只管一场
+    const b = Run.newRun('liehuo'); b.pending = { kind: 'event', id: 'bounty' };
+    Run.eventChoose(b, 0); Run.leave(b);
+    b.node = { type: 'fight', gold: 40 };
+    Run.afterBattle(b, { units: [{ alive: true, items: [], hp: 500 }], result: 0, style: { gold: 0 } });
+    const g1 = b.pending.gold; b.pending = null;
+    b.node = { type: 'fight', gold: 40 };
+    Run.afterBattle(b, { units: [{ alive: true, items: [], hp: 500 }], result: 0, style: { gold: 0 } });
+    check(g1 === 80 && b.pending.gold === 40, '「赏金公告」：下一场金币翻倍，之后恢复', `${g1} → ${b.pending.gold}`);
+    // 老存档（没有 v1.3 的新字段）照样能读、能打
+    const old = Run.newRun('liehuo');
+    delete old.seenEvents; delete old.atkBonus; delete old.fuelBonus; delete old.luck; delete old.nextGoldMul;
+    const ok = (() => { try { Run.playerVehicle(old); Run.perks(old); old.layers[old.step] = [{ type: 'event' }]; Run.enter(old, 0); return !!old.pending; } catch (e) { return false; } })();
+    check(ok, 'v1.2 的老存档缺新字段也能接着玩');
   }
   {
     Run.saveMeta({ medals: 0, unlocked: Run.STARTERS.slice(), asc: 0, wins: 0, runs: 0, best: 0 });
@@ -723,14 +1061,16 @@ module.exports = function runModeTests(RZ, check, head) {
         while (!s.over && guard++ < 300) {
           const p = s.pending;
           if (p) {
-            if (p.kind === 'reward') Run.takeReward(s, guard % 3, ['w1', 'w2', 'ss'][guard % 3]);
-            else if (p.kind === 'shop') { p.stock.forEach((x, i) => Run.buy(s, i, 'w1')); Run.leave(s); }
-            else if (p.kind === 'rest') Run.rest(s, 'repair');
-            else if (p.kind === 'event') Run.eventChoose(s, guard % 2);
-            else Run.leave(s);
-            continue;
-          }
-          if (!Run.enter(s, guard % Run.choices(s).length)) continue;
+            if (p.kind === 'event') {
+              if (Run.eventChoose(s, guard % 2) !== 'fight') continue;   // 事件转成战斗就接着往下打
+            } else {
+              if (p.kind === 'reward') Run.takeReward(s, guard % 3, ['w1', 'w2', 'ss'][guard % 3]);
+              else if (p.kind === 'shop') { p.stock.forEach((x, i) => Run.buy(s, i, 'w1')); Run.leave(s); }
+              else if (p.kind === 'rest') Run.rest(s, 'repair');
+              else Run.leave(s);
+              continue;
+            }
+          } else if (!Run.enter(s, guard % Run.choices(s).length)) continue;
           const g = new RZ.Game(Run.battleOpts(s, 'hard'));
           let f = 0;
           while (g.result === null && f < 60 * 60 * 12) { g.update(16); f++; }

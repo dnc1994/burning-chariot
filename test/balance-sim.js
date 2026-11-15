@@ -9,21 +9,26 @@ for (let r = 0; r < N; r++) {
   const s = Run.newRun(RZ.VEHICLES[r % 10].id);
   let guard = 0;
   while (!s.over && guard++ < 200) {
+    let eventFight = false;
     if (s.pending) {
       const p = s.pending;
       if (p.kind === 'reward') { const i = (Math.random() * 3) | 0; Run.takeReward(s, i, ['w1', 'w1', 'w2', 'ss'][(Math.random() * 4) | 0]); }
-      else if (p.kind === 'shop') { for (let i = 0; i < p.stock.length; i++) Run.buy(s, i, 'w1'); Run.leave(s); }
+      else if (p.kind === 'shop') { for (let i = 0; i < p.stock.length; i++) if (!p.stock[i].black) Run.buy(s, i, 'w1'); Run.leave(s); }
       else if (p.kind === 'rest') Run.rest(s, s.hp < Run.maxHp(s) * 0.6 ? 'repair' : 'forge');
-      else if (p.kind === 'event') Run.eventChoose(s, 0);
+      else if (p.kind === 'event') {
+        // 选第一个选得了的选项；转成战斗的就接着往下打
+        const ev = Run.eventById(p.id), k = ev.options.findIndex((o) => Run.canChoose(s, o));
+        eventFight = Run.eventChoose(s, k) === 'fight';
+      }
       else Run.leave(s);
-      continue;
+      if (!eventFight) continue;
     }
     const ch = Run.choices(s);
     let idx = ch.findIndex(n => n.type === 'fight' || n.type === 'boss');
     if (idx < 0) idx = s.gold >= 70 ? ch.findIndex(n => n.type === 'shop') : 0;
     if (idx < 0) idx = 0;
     if (s.hp < Run.maxHp(s) * 0.45) { const j = ch.findIndex(n => n.type === 'rest'); if (j >= 0) idx = j; }
-    if (Run.enter(s, idx)) {
+    if (eventFight || Run.enter(s, idx)) {
       const o = Run.battleOpts(s, playerDiff); 
       const g = new RZ.Game(o);
       // 玩家那辆用 playerDiff 的抖动：临时包一层

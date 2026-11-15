@@ -60,7 +60,19 @@
     { id: 'light', name: '轻量化', desc: '耗油 -25%，出手也跟着变快。',
       apply: function (w) { w.fuel = Math.max(3, Math.round(w.fuel * 0.75)); } },
     { id: 'knock', name: '冲击波', desc: '击退力 +80%，把人掀下悬崖。',
-      apply: function (w) { w.kb = (w.kb || 1) + 0.8; } }
+      apply: function (w) { w.kb = (w.kb || 1) + 0.8; } },
+
+    // ---- 稀有改造：只在精英 / Boss 奖励、商店里出现（普通战斗偶尔掉一件）。每件都改变武器「怎么用」，不只是加数 ----
+    { id: 'nuke', rare: true, name: '微型核芯', desc: '威力 +45%、范围 +35%，但耗油 +60%。',
+      apply: function (w) { w.damage *= 1.45; w.radius *= 1.35; w.digMul *= 1.2; w.fuel = Math.round(w.fuel * 1.6); } },
+    { id: 'chain', rare: true, name: '连锁闪电', desc: '炸到敌人后，电流跳向最近的另一个敌人，造成五成伤害。再装一个多跳一次。',
+      apply: function (w) { w.chain = (w.chain || 0) + 1; } },
+    { id: 'gravity', rare: true, name: '引力坍缩', desc: '爆炸不再把人推开，而是往爆心吸——把一群敌人拢到一起。',
+      apply: function (w) { w.pull = 1; w.kb = Math.max(w.kb || 1, 1.3); } },
+    { id: 'mirv', rare: true, name: '子母弹头', desc: '落点撒出 5 颗子弹，每颗有母弹一半的威力。',
+      apply: function (w) { w.cluster = (w.cluster || 0) + 5; w.clusterMul = 0.5; } },
+    { id: 'shock', rare: true, name: '电磁脉冲', desc: '被炸到的敌人麻痹一回合（动不了），威力 -10%。Boss 不吃麻痹。',
+      apply: function (w) { w.stun = Math.max(w.stun || 0, 1); w.damage *= 0.9; } }
   ];
   Run.modById = function (id) { return byId(Run.MODS, id); };
 
@@ -76,6 +88,29 @@
     w.mods = tags;
     return w;
   };
+
+  /** 改造池：普通 / 稀有分开抽 */
+  function modPool(rare) { return Run.MODS.filter(function (m) { return !!m.rare === !!rare; }); }
+  Run.modPool = modPool;
+
+  // ================= 战车的远征被动 =================
+  // 每辆车一个，只在远征（爽快规则）里生效，用来把「选哪辆车开局」变成流派的起点。
+  // perks 跟遗物一样并进 Run.perks()；weapon(w) 是改武器副本的（在改造之后跑）。
+  Run.PASSIVES = {
+    liehuo: { name: '多面手', desc: '这一发换了一把和上一发不同的武器，伤害 +25%。', perks: { variety: 0.25 } },
+    honglong: { name: '嗜血', desc: '击破敌人时回复 15% 耐久，下一发伤害 +40%。', perks: { bloodlust: 1 } },
+    tiejingang: { name: '铁壁', desc: '一回合没挪窝，到下次轮到你之前受到的伤害 -30%。', perks: { brace: 0.3 } },
+    beibeilong: { name: '一窝蛋', desc: '所有多发武器多撒一发。', perks: {},
+      weapon: function (w) { if (w.count > 1) w.count += 1; } },
+    duzhizhu: { name: '蚀甲', desc: '敌人身上带着灼烧或中毒时，你对它的伤害 +30%。', perks: { corrode: 0.3 } },
+    xuanfeng: { name: '乘风', desc: '炮弹受风影响减半；风越大伤害越高，满风 +30%。', perks: { windRider: 0.3 },
+      weapon: function (w) { w.windMul = (w.windMul == null ? 1 : w.windMul) * 0.5; } },
+    tuoer: { name: '雷鸣', desc: '每第三次开火，落点额外引下一道落雷。', perks: { thunderEvery: 3 } },
+    chiyan: { name: '燎原', desc: '你留下的地火多烧一轮、伤害 +50%；你自己站在火里不受伤。', perks: { pyro: 1 } },
+    landeng: { name: '精准', desc: '直接命中再 +30% 伤害，并回 8 点燃料。', perks: { precise: 0.3 } },
+    aodin: { name: '镇地', desc: '不会被击飞；炸出的坑大 40%。', perks: { anchor: 1, dig: 0.4 } }
+  };
+  Run.passiveOf = function (vid) { return Run.PASSIVES[vid] || null; };
 
   // ================= 遗物 =================
   // perks 是一组可相加的数值，Game 里按名字读；gain 是拿到那一刻的一次性效果。
@@ -109,18 +144,70 @@
     { id: 'twin', name: '双联炮塔', rarity: 'boss', desc: '一号、二号武器各免费装上一个「分裂弹头」。',
       gain: function (s) { s.mods.w1.push('split'); s.mods.w2.push('split'); } },
     { id: 'titan', name: '泰坦骨架', rarity: 'boss', desc: '最大耐久 +300，并把耐久补满。',
-      gain: function (s) { s.hpBonus += 300; s.hp = 99999; } }
+      gain: function (s) { s.hpBonus += 300; s.hp = 99999; } },
+
+    // ---- 诅咒遗物：好处比稀有遗物还大，代价一直跟着你。只从事件和商店的黑市角落来，修整时可以「净化」掉 ----
+    { id: 'bloodmag', name: '血契弹匣', rarity: 'curse', desc: '攻击 +35%。代价：每次开火失去 3% 最大耐久（不会因此阵亡）。',
+      perks: { atk: 0.35, selfHarm: 0.03 } },
+    { id: 'leaky', name: '无底油箱', rarity: 'curse', desc: '每回合多回 15 点燃料。代价：每场战斗开局燃料清零。',
+      perks: { regen: 15, noStartFuel: 1 } },
+    { id: 'dice', name: '赌徒骰子', rarity: 'curse', desc: '暴击率 +35%。代价：每一发有 20% 概率哑火，只剩三成伤害。',
+      perks: { crit: 0.35, dud: 0.2 } },
+    { id: 'greed', name: '贪婪之心', rarity: 'curse', desc: '金币 +80%。代价：受到的伤害 +20%。',
+      perks: { gold: 0.8, armor: -0.2 } },
+    { id: 'lead', name: '铅制装甲', rarity: 'curse', desc: '最大耐久 +350 并立刻补上。代价：移动耗油翻倍。',
+      perks: { jet: -1 }, gain: function (s) { s.hpBonus += 350; s.hp += 350; },
+      lose: function (s) { s.hpBonus -= 350; } },
+    { id: 'myopia', name: '短视镜片', rarity: 'curse', desc: '攻击 +25%。代价：弹道预览只剩开头一小段。',
+      perks: { atk: 0.25, blind: 1 } }
   ];
   Run.relicById = function (id) { return byId(Run.RELICS, id); };
 
-  /** 把手里所有遗物的 perks 加起来 */
+  // ================= 联动 =================
+  // 两件遗物都在手里时额外生效。数值型的直接并进 perks；带新行为的 perks 名字 game.js 认得。
+  // 手里已经有一半时，另一半在奖励里出现的机会翻三倍（见 relicWeight）。
+  Run.SYNERGIES = [
+    { id: 'chainblast', name: '连环爆破', needs: ['after', 'demo'], desc: '余震威力再 +20%，范围再 +10%。', perks: { aftershock: 0.2, blast: 0.1 } },
+    { id: 'weakspot', name: '弱点分析', needs: ['crit', 'combo'], desc: '连击每一层再加 6% 暴击率。', perks: { critPerStreak: 0.06 } },
+    { id: 'hedgehog', name: '刺猬', needs: ['thorns', 'plate'], desc: '反弹比例再 +30%。', perks: { thorns: 0.3 } },
+    { id: 'cycle', name: '再生循环', needs: ['vamp', 'nano'], desc: '吸能再 +10%，每回合修复再 +2%。', perks: { vamp: 0.1, repair: 0.02 } },
+    { id: 'salvo', name: '首轮齐射', needs: ['ambush', 'auto'], desc: '每场战斗的第一发自动变成双倍攻击。', perks: { ambushDouble: 1 } },
+    { id: 'edge', name: '刀尖舞者', needs: ['glass', 'berserk'], desc: '攻击再 +20%。', perks: { atk: 0.2 } },
+    { id: 'dozer', name: '推土机', needs: ['ram', 'magnet'], desc: '击退力再 +60%，把敌人打下地图多拿 15 金币赏金。', perks: { kb: 0.6, ringGold: 15 } },
+    { id: 'recycle', name: '回收专家', needs: ['bounty', 'siphon'], desc: '每炸到一个敌人 +3 金币。', perks: { goldPerHit: 3 } },
+    { id: 'sniper', name: '狙击手', needs: ['scope', 'crit'], desc: '隔着 1000px 以上命中，伤害 ×1.6。', perks: { snipeCrit: 0.6 } },
+    { id: 'guzzler', name: '油老虎', needs: ['turbo', 'tank'], desc: '每回合再多回 6 点燃料，开局再多 30 点。', perks: { regen: 6, startFuel: 30 } },
+    { id: 'phoenix', name: '浴火重生', needs: ['revive', 'berserk'], desc: '应急核心复活时直接满血，而不是四成。', perks: { phoenix: 1 } }
+  ];
+  Run.synergyById = function (id) { return byId(Run.SYNERGIES, id); };
+  /** 手里这些遗物凑成了哪些联动 */
+  Run.activeSynergies = function (state) {
+    return Run.SYNERGIES.filter(function (sy) {
+      return state.relics.indexOf(sy.needs[0]) >= 0 && state.relics.indexOf(sy.needs[1]) >= 0;
+    });
+  };
+  /** 这件遗物参与的联动，以及另一半是谁 */
+  Run.synergiesOf = function (relicId) {
+    var out = [];
+    Run.SYNERGIES.forEach(function (sy) {
+      var k = sy.needs.indexOf(relicId);
+      if (k >= 0) out.push({ syn: sy, partner: sy.needs[1 - k] });
+    });
+    return out;
+  };
+
+  /** 把战车被动、手里所有遗物、凑成的联动的 perks 加起来 */
   Run.perks = function (state) {
-    var out = {};
-    for (var i = 0; i < state.relics.length; i++) {
+    var out = {}, i, k;
+    var add = function (pk) { for (k in pk) out[k] = (out[k] || 0) + pk[k]; };
+    var ps = Run.passiveOf(state.vehicleId);
+    if (ps) add(ps.perks);
+    for (i = 0; i < state.relics.length; i++) {
       var r = Run.relicById(state.relics[i]);
-      if (!r || !r.perks) continue;
-      for (var k in r.perks) out[k] = (out[k] || 0) + r.perks[k];
+      if (r && r.perks) add(r.perks);
     }
+    Run.activeSynergies(state).forEach(function (sy) { add(sy.perks); });
+    if (state.fuelBonus) add({ startFuel: state.fuelBonus });    // 事件「黑市加油站」
     return out;
   };
 
@@ -349,9 +436,12 @@
     v.moveCost = base.moveCost * (1 - (pk.jet || 0));
     v.climb = base.climb + (pk.climb || 0);
     v.regen = base.regen + (pk.regen || 0);
+    v.atk = Math.round(v.atk * (1 + (state.atkBonus || 0)));     // 事件「训练场」攒下的
     v.w1 = Run.modWeapon(base.w1, state.mods.w1);
     v.w2 = Run.modWeapon(base.w2, state.mods.w2);
     v.ss = Run.modWeapon(base.ss, state.mods.ss);
+    var ps = Run.passiveOf(base.id);
+    if (ps && ps.weapon) { ps.weapon(v.w1); ps.weapon(v.w2); ps.weapon(v.ss); }
     return v;
   };
   Run.maxHp = function (state) { return Run.playerVehicle(state).hp; };
@@ -453,7 +543,7 @@
     if (node.type === 'fight' || node.type === 'elite' || node.type === 'boss') return true;
     if (node.type === 'shop') state.pending = { kind: 'shop', stock: Run.genStock(state) };
     else if (node.type === 'rest') state.pending = { kind: 'rest' };
-    else state.pending = { kind: 'event', id: pick(Run.EVENTS).id };
+    else state.pending = { kind: 'event', id: pickEvent(state) };
     return false;
   };
 
@@ -482,30 +572,48 @@
   };
 
   // ================= 战后 =================
+  /** 抽遗物的权重：能和手里某件凑成联动的，机会翻三倍——流派要「抓得到」才成型 */
+  function relicWeight(state, r) {
+    var w = 1;
+    Run.synergiesOf(r.id).forEach(function (x) { if (state.relics.indexOf(x.partner) >= 0) w = 3; });
+    return w;
+  }
+  function pickWeighted(state, list) {
+    var total = 0, i;
+    for (i = 0; i < list.length; i++) total += relicWeight(state, list[i]);
+    var x = rand() * total;
+    for (i = 0; i < list.length; i++) { x -= relicWeight(state, list[i]); if (x < 0) return list[i]; }
+    return list[list.length - 1];
+  }
+  /** 还没拿到的某个稀有度的遗物（taken 里的也排除）。诅咒遗物永远不进普通奖励池 */
+  function relicPool(state, rarity, taken) {
+    return Run.RELICS.filter(function (r) {
+      return r.rarity === rarity && state.relics.indexOf(r.id) < 0 && (!taken || taken.indexOf(r.id) < 0);
+    });
+  }
+  Run.relicPool = relicPool;
+
   function rewardChoices(state, kind) {
-    var owned = state.relics, out = [];
-    var pool = function (rarity) {
-      return Run.RELICS.filter(function (r) { return r.rarity === rarity && owned.indexOf(r.id) < 0; });
-    };
+    var out = [];
+    var taken = function () { return out.map(function (c) { return c.id; }); };
     var relic = function (rarity) {
-      var p = pool(rarity);
-      if (!p.length) p = pool('common');
-      var taken = out.map(function (c) { return c.id; });
-      p = p.filter(function (r) { return taken.indexOf(r.id) < 0; });
-      return p.length ? { type: 'relic', id: pick(p).id } : { type: 'mod', id: pick(Run.MODS).id };
+      var p = relicPool(state, rarity, taken());
+      if (!p.length) p = relicPool(state, 'common', taken());
+      return p.length ? { type: 'relic', id: pickWeighted(state, p).id } : mod(false);
     };
-    var mod = function () {
-      var taken = out.map(function (c) { return c.id; });
-      var p = Run.MODS.filter(function (m) { return taken.indexOf(m.id) < 0; });
+    var mod = function (rare) {
+      var p = modPool(rare).filter(function (m) { return taken().indexOf(m.id) < 0; });
       return { type: 'mod', id: pick(p).id };
     };
     if (kind === 'boss') { out.push(relic('boss')); out.push(relic('rare')); out.push(relic('rare')); }
-    else if (kind === 'elite') { out.push(relic('rare')); out.push(relic('rare')); out.push(mod()); }
+    else if (kind === 'elite') { out.push(relic('rare')); out.push(relic('rare')); out.push(mod(true)); }
     else {
-      out.push(mod());
+      out.push(mod(rand() < 0.1));
       out.push(relic(rand() < 0.18 ? 'rare' : 'common'));
-      out.push(rand() < 0.5 ? mod() : relic('common'));
+      out.push(rand() < 0.5 ? mod(false) : relic('common'));
     }
+    // 事件「拾荒小孩」给的好运：下一次奖励多一个选项
+    if (state.luck > 0) { state.luck--; out.push(rand() < 0.5 ? relic('rare') : mod(true)); }
     return out;
   }
 
@@ -524,7 +632,8 @@
     }
     state.hp = me.hp + Run.maxHp(state) * 0.18;        // 战后简单抢修
     clampHp(state);
-    var gold = Math.round((node.gold + game.style.gold) * (1 + (pk.gold || 0)));
+    var gold = Math.round((node.gold + game.style.gold) * (1 + (pk.gold || 0)) * (state.nextGoldMul || 1));
+    state.nextGoldMul = 1;                             // 事件「赏金公告」只管一场
     state.gold += gold;
     state.battles++;
     if (node.type === 'boss') {
@@ -542,6 +651,19 @@
     if (r.gain) r.gain(state);
     clampHp(state);
   }
+  /** 拿走一件遗物（净化、熔掉、交换）。有 lose 的把 gain 加的东西退回去 */
+  function dropRelic(state, id) {
+    var k = state.relics.indexOf(id), r = Run.relicById(id);
+    if (k < 0) return false;
+    state.relics.splice(k, 1);
+    if (r && r.lose) r.lose(state);
+    clampHp(state);
+    return true;
+  }
+  function curses(state) {
+    return state.relics.filter(function (id) { var r = Run.relicById(id); return r && r.rarity === 'curse'; });
+  }
+  Run.curses = curses;
   function grantItem(state, id) {
     if (state.items.length >= RZ.MAX_ITEMS) return false;
     state.items.push(id);
@@ -602,12 +724,38 @@
 
   Run.genStock = function (state) {
     var owned = state.relics, stock = [];
-    var relics = sample(Run.RELICS.filter(function (r) { return r.rarity !== 'boss' && owned.indexOf(r.id) < 0; }), 3);
+    var pool = Run.RELICS.filter(function (r) { return (r.rarity === 'common' || r.rarity === 'rare') && owned.indexOf(r.id) < 0; });
+    var relics = [];
+    for (var i = 0; i < 3 && pool.length; i++) {                   // 能凑联动的更容易上架
+      var r = pickWeighted(state, pool);
+      relics.push(r); pool.splice(pool.indexOf(r), 1);
+    }
     relics.forEach(function (r) { stock.push({ type: 'relic', id: r.id, cost: r.rarity === 'rare' ? 120 : 70 }); });
-    sample(Run.MODS, 2).forEach(function (m) { stock.push({ type: 'mod', id: m.id, cost: 55 }); });
+    sample(modPool(false), 1).concat(sample(modPool(true), 1)).forEach(function (m) {
+      stock.push({ type: 'mod', id: m.id, cost: m.rare ? 95 : 55 });
+    });
     sample(RZ.ITEMS, 3).forEach(function (it) { stock.push({ type: 'item', id: it.id, cost: ITEM_PRICE[it.id] || 25 }); });
+    // 黑市角落：一件诅咒遗物，便宜，好处大，代价一直跟着你
+    var cursed = relicPool(state, 'curse');
+    if (cursed.length) stock.push({ type: 'relic', id: pick(cursed).id, cost: 45, black: true });
     stock.push({ type: 'repair', id: 'repair', cost: 40 });
     return stock;
+  };
+
+  /** 刷新货架：已经买走的也换掉。每家店第一次 15 金币，之后每次再贵 10 */
+  Run.rerollCost = function (state) {
+    var p = state.pending;
+    return p && p.kind === 'shop' ? 15 + 10 * (p.rerolls || 0) : 0;
+  };
+  Run.reroll = function (state) {
+    var p = state.pending;
+    if (!p || p.kind !== 'shop') return false;
+    var cost = Run.rerollCost(state);
+    if (state.gold < cost) return false;
+    state.gold -= cost;
+    p.rerolls = (p.rerolls || 0) + 1;
+    p.stock = Run.genStock(state);
+    return true;
   };
 
   Run.buy = function (state, index, slot) {
@@ -633,10 +781,22 @@
     { id: 'forge', name: '加固底盘', desc: '最大耐久永久 +90（并补上这 90）。' },
     { id: 'supply', name: '整备弹药', desc: '获得两件随机道具，外加 25 金币。' }
   ];
+  /** 手里有诅咒遗物时，修整多一个「净化」选项 */
+  Run.restOptions = function (state) {
+    var list = Run.REST.slice(), c = curses(state);
+    if (c.length) list.push({ id: 'purify', name: '净化', desc: '拆掉「' + Run.relicById(c[c.length - 1]).name + '」，连同它的好处和代价一起。' });
+    return list;
+  };
+
   Run.rest = function (state, id) {
     var p = state.pending;
     if (!p || p.kind !== 'rest') return false;
-    if (id === 'repair') { state.hp += Run.maxHp(state) * 0.4; }
+    if (id === 'purify') {
+      var c = curses(state);
+      if (!c.length) return false;
+      dropRelic(state, c[c.length - 1]);
+    }
+    else if (id === 'repair') { state.hp += Run.maxHp(state) * 0.4; }
     else if (id === 'forge') { state.hpBonus += 90; state.hp += 90; }
     else if (id === 'supply') { grantItem(state, pick(RZ.ITEMS).id); grantItem(state, pick(RZ.ITEMS).id); state.gold += 25; }
     else return false;
@@ -647,25 +807,40 @@
   };
 
   // ================= 事件 =================
-  // run(state) 返回一句结果，界面拿去显示
+  // run(state) 返回一句结果给界面显示；返回 { fight: 'fight' | 'elite', text } 表示要打一场（打完照常领奖励）。
+  // need(state) 返回 false 时这个选项灰掉，界面上照样显示，玩家知道「差点什么」。
+  function slotName(slot) { return slot === 'w1' ? '一号武器' : slot === 'w2' ? '二号武器' : '必杀'; }
+  function loseMax(s, f) { var n = Math.round(Run.maxHp(s) * f); s.hp = Math.max(1, s.hp - n); return n; }
+  function gainMax(s, f) { s.hp += Run.maxHp(s) * f; clampHp(s); }
+  function randomItems(s, n) {
+    var got = [];
+    for (var i = 0; i < n; i++) { var it = pick(RZ.ITEMS); if (grantItem(s, it.id)) got.push(it.name); }
+    return got;
+  }
+  function randomRelic(s, rarity) {
+    var p = relicPool(s, rarity);
+    if (!p.length) return null;
+    var r = rarity === 'curse' ? pick(p) : pickWeighted(s, p);
+    grantRelic(s, r.id);
+    return r;
+  }
+  function anyMods(s) { return s.mods.w1.length + s.mods.w2.length + s.mods.ss.length > 0; }
+
   Run.EVENTS = [
     { id: 'depot', title: '废弃补给站', text: '沙尘里露出半截集装箱，锁早就锈穿了。',
       options: [
         { label: '搬走值钱的', desc: '+60 金币', run: function (s) { s.gold += 60; return '你拆下一堆还能卖的零件。金币 +60。'; } },
         { label: '翻找弹药', desc: '两件随机道具', run: function (s) {
-          var a = pick(RZ.ITEMS), b = pick(RZ.ITEMS), got = [];
-          if (grantItem(s, a.id)) got.push(a.name);
-          if (grantItem(s, b.id)) got.push(b.name);
+          var got = randomItems(s, 2);
           return got.length ? '找到了：' + got.join('、') + '。' : '道具栏已经满了，只能空手离开。';
         } }
       ] },
     { id: 'tuner', title: '黑市改装师', text: '「好东西有，就是装的时候得拆你几块装甲。」',
       options: [
         { label: '成交', desc: '失去 25% 当前耐久，获得一件稀有遗物', run: function (s) {
-          var p = Run.RELICS.filter(function (r) { return r.rarity === 'rare' && s.relics.indexOf(r.id) < 0; });
-          if (!p.length) { s.gold += 80; return '他翻遍了仓库也没有你没见过的货，赔了你 80 金币。'; }
+          if (!relicPool(s, 'rare').length) { s.gold += 80; return '他翻遍了仓库也没有你没见过的货，赔了你 80 金币。'; }
           s.hp = Math.max(1, Math.round(s.hp * 0.75));
-          var r = pick(p); grantRelic(s, r.id);
+          var r = randomRelic(s, 'rare');
           return '装甲被拆走一截，换来了「' + r.name + '」：' + r.desc;
         } },
         { label: '算了', desc: '什么都不发生', run: function () { return '你摆摆手，把车开走了。'; } }
@@ -673,32 +848,216 @@
     { id: 'chip', title: '来历不明的芯片', text: '路边残骸的火控电脑还亮着，里面有一份改造图纸。',
       options: [
         { label: '直接刷进火控', desc: '随机一把武器获得随机改造', run: function (s) {
-          var slot = pick(['w1', 'w2', 'ss']), m = pick(Run.MODS);
+          var slot = pick(['w1', 'w2', 'ss']), m = pick(modPool(false));
           s.mods[slot].push(m.id);
-          return (slot === 'w1' ? '一号武器' : slot === 'w2' ? '二号武器' : '必杀') + '装上了「' + m.name + '」。';
+          return slotName(slot) + '装上了「' + m.name + '」。';
         } },
-        { label: '拆了当备件', desc: '恢复 25% 耐久', run: function (s) { s.hp += Run.maxHp(s) * 0.25; clampHp(s); return '用拆下来的零件补了补车体。'; } }
+        { label: '拆了当备件', desc: '恢复 25% 耐久', run: function (s) { gainMax(s, 0.25); return '用拆下来的零件补了补车体。'; } }
       ] },
     { id: 'gamble', title: '废土赌局', text: '几个拾荒者围着一箱金币：「猜对了全归你，猜错了挨我们一炮。」',
       options: [
         { label: '赌一把', desc: '一半概率 +110 金币，一半概率失去 15% 耐久', run: function (s) {
           if (rand() < 0.5) { s.gold += 110; return '你赢了！金币 +110。'; }
-          s.hp = Math.max(1, Math.round(s.hp - Run.maxHp(s) * 0.15));
+          loseMax(s, 0.15);
           return '猜错了。一发冷炮砸在车顶上。';
         } },
         { label: '不赌', desc: '什么都不发生', run: function () { return '你没理他们。'; } }
+      ] },
+    { id: 'shrine', title: '锈蚀神龛', text: '沙地中央立着一座焊满弹壳的神龛，供桌上摆着一件还在发烫的零件。',
+      options: [
+        { label: '拿走供品', desc: '获得一件诅咒遗物，外加 60 金币', run: function (s) {
+          s.gold += 60;
+          var r = randomRelic(s, 'curse');
+          return r ? '零件烫得你龇牙咧嘴。「' + r.name + '」：' + r.desc : '供桌上的东西你都有了。顺走了 60 金币的香火钱。';
+        } },
+        { label: '拜一拜就走', desc: '恢复 10% 耐久', run: function (s) { gainMax(s, 0.1); return '不知道是不是心理作用，车好像顺了一点。'; } }
+      ] },
+    { id: 'ambush', title: '沙丘伏击', text: '侦察无人机传回画面：前面那道沙丘后面，趴着一辆改装过的精英战车。',
+      options: [
+        { label: '迎战', desc: '打一场精英战，赢了照常拿精英奖励', run: function () { return { fight: 'elite', text: '你按下了战斗警报。' }; } },
+        { label: '绕远路', desc: '失去 12% 耐久', run: function (s) { loseMax(s, 0.12); return '绕了一大圈，被流弹蹭掉一层漆。'; } }
+      ] },
+    { id: 'convoy', title: '军火车队', text: '一列军火车队停在路边加油，押车的人朝你招手：「要货吗？」',
+      options: [
+        { label: '买一件遗物', desc: '60 金币，随机一件普通遗物', need: function (s) { return s.gold >= 60 && relicPool(s, 'common').length > 0; },
+          run: function (s) { s.gold -= 60; var r = randomRelic(s, 'common'); return '成交。「' + r.name + '」：' + r.desc; } },
+        { label: '拿装甲换稀有改造', desc: '失去 20% 当前耐久，一号或二号武器随机装上一件稀有改造', run: function (s) {
+          s.hp = Math.max(1, Math.round(s.hp * 0.8));
+          var slot = pick(['w1', 'w2']), m = pick(modPool(true));
+          s.mods[slot].push(m.id);
+          return '他们拆走一块装甲，给' + slotName(slot) + '装上了「' + m.name + '」。';
+        } },
+        { label: '不要', desc: '什么都不发生', run: function () { return '车队轰隆隆地开走了。'; } }
+      ] },
+    { id: 'oilfire', title: '油田大火', text: '一整片油井烧成了火海，火光里隐约能看见几个没烧到的补给箱。',
+      options: [
+        { label: '冲进去抢', desc: '失去 15% 耐久，得两件道具和 40 金币', run: function (s) {
+          loseMax(s, 0.15); s.gold += 40;
+          var got = randomItems(s, 2);
+          return '车壳烤得发红，抢出来 40 金币' + (got.length ? '和' + got.join('、') : '（道具栏满了，别的没带走）') + '。';
+        } },
+        { label: '绕开', desc: '什么都不发生', run: function () { return '你远远地看了一会儿火。'; } }
+      ] },
+    { id: 'graveyard', title: '战车坟场', text: '一片烧焦的残骸，有几辆的火控还在一闪一闪。',
+      options: [
+        { label: '致敬', desc: '恢复 20% 耐久', run: function (s) { gainMax(s, 0.2); return '你在坟场边停了一会儿，顺手捡了些还能用的装甲片。'; } },
+        { label: '翻找', desc: '一半概率稀有遗物，一半概率诅咒遗物', run: function (s) {
+          var good = rand() < 0.5, r = randomRelic(s, good ? 'rare' : 'curse');
+          if (!r) { s.gold += 50; return '翻来翻去只找到 50 金币的废铁。'; }
+          return (good ? '运气不错。' : '这东西不太干净……') + '「' + r.name + '」：' + r.desc;
+        } }
+      ] },
+    { id: 'foundry', title: '废弃熔炉', text: '炉膛还热着，可以熔掉点东西换钱，也能顺手补补车。',
+      options: [
+        { label: '熔掉最新的遗物', desc: '+130 金币（诅咒遗物也熔得掉）', need: function (s) { return s.relics.length > 0; }, run: function (s) {
+          var id = s.relics[s.relics.length - 1], r = Run.relicById(id);
+          dropRelic(s, id); s.gold += 130;
+          return '「' + r.name + '」化成了一摊铁水。金币 +130。';
+        } },
+        { label: '修车', desc: '35 金币，恢复 45% 耐久', need: function (s) { return s.gold >= 35; }, run: function (s) {
+          s.gold -= 35; gainMax(s, 0.45); return '借炉子把车体重新焊了一遍。';
+        } },
+        { label: '离开', desc: '什么都不发生', run: function () { return '炉火映着你开远的车。'; } }
+      ] },
+    { id: 'storm', title: '雷暴', text: '天边压过来一团铁灰色的云，电流在车身上噼啪作响。',
+      options: [
+        { label: '竖起天线', desc: '必杀装上「引雷针」', run: function (s) { s.mods.ss.push('thunder'); return '一道雷劈在天线上，必杀的火控从此带电。'; } },
+        { label: '躲进峡谷', desc: '恢复 10% 耐久，得一件道具', run: function (s) {
+          gainMax(s, 0.1); var got = randomItems(s, 1);
+          return '在峡谷里等雷暴过去' + (got.length ? '，还捡到一件' + got[0] : '') + '。';
+        } }
+      ] },
+    { id: 'bounty', title: '赏金公告', text: '加油站门口贴着一张通缉令，上面那辆车就在附近出没。',
+      options: [
+        { label: '接单', desc: '下一场战斗的金币翻倍', run: function (s) { s.nextGoldMul = 2; return '你把通缉令折好塞进了口袋。下一场的金币翻倍。'; } },
+        { label: '不接', desc: '什么都不发生', run: function () { return '跟你没关系。'; } }
+      ] },
+    { id: 'mirror', title: '镜面盐湖', text: '盐湖平得像一面镜子，车的倒影一清二楚——连火控里的改装都看得见。',
+      options: [
+        { label: '照着倒影复刻', desc: '把一件已装的改造复制到另一把随机武器上', need: anyMods, run: function (s) {
+          var have = [];
+          ['w1', 'w2', 'ss'].forEach(function (k) { s.mods[k].forEach(function (m) { have.push({ slot: k, id: m }); }); });
+          var src = pick(have), to = pick(['w1', 'w2', 'ss'].filter(function (k) { return k !== src.slot; }));
+          s.mods[to].push(src.id);
+          return slotName(to) + '也装上了「' + Run.modById(src.id).name + '」。';
+        } },
+        { label: '喝口凉水', desc: '恢复 15% 耐久', run: function (s) { gainMax(s, 0.15); return '盐湖边的泉水居然是甜的。'; } }
+      ] },
+    { id: 'kid', title: '拾荒小孩', text: '一个小孩拦住车，手里攥着一块亮晶晶的零件：「三十块，不贵。」',
+      options: [
+        { label: '买下', desc: '30 金币，下一次战后奖励多一个选项', need: function (s) { return s.gold >= 30; }, run: function (s) {
+          s.gold -= 30; s.luck = (s.luck || 0) + 1; return '零件是个幸运符。下一次战后奖励多一个选项。';
+        } },
+        { label: '摆摆手', desc: '什么都不发生', run: function () { return '小孩朝你做了个鬼脸。'; } }
+      ] },
+    { id: 'minefield', title: '雷区', text: '前面的路上插满了褪色的骷髅牌。',
+      options: [
+        { label: '小心开过去', desc: '失去 8% 耐久', run: function (s) { loseMax(s, 0.08); return '还是踩响了一颗。'; } },
+        { label: '扔道具引爆', desc: '用掉一件道具，捡回 55 金币的废铁', need: function (s) { return s.items.length > 0; }, run: function (s) {
+          var it = RZ.itemById(s.items.pop()); s.gold += 55;
+          return '扔出去的「' + it.name + '」炸响了一串地雷，满地都是能卖钱的弹片。';
+        } }
+      ] },
+    { id: 'range', title: '野外靶场', text: '一座废弃的军用靶场，靶子还立着，弹药箱里还有货。',
+      options: [
+        { label: '练一下午', desc: '40 金币，攻击永久 +6%', need: function (s) { return s.gold >= 40; }, run: function (s) {
+          s.gold -= 40; s.atkBonus = (s.atkBonus || 0) + 0.06; return '打空了三箱弹药，手感回来了。攻击永久 +6%。';
+        } },
+        { label: '拆靶子当装甲', desc: '最大耐久永久 +60', run: function (s) { s.hpBonus += 60; s.hp += 60; clampHp(s); return '焊了一圈靶板在车身上。最大耐久 +60。'; } }
+      ] },
+    { id: 'trader', title: '流浪商人', text: '一个背着大包的商人围着你的车转了三圈：「你那件我看上了，换我这件？」',
+      options: [
+        { label: '换', desc: '最早拿到的一件普通 / 稀有遗物，换一件同稀有度的随机遗物', need: function (s) {
+          return s.relics.some(function (id) { var r = Run.relicById(id); return r.rarity === 'common' || r.rarity === 'rare'; });
+        }, run: function (s) {
+          var id = s.relics.filter(function (x) { var r = Run.relicById(x); return r.rarity === 'common' || r.rarity === 'rare'; })[0];
+          var old = Run.relicById(id), p = relicPool(s, old.rarity);
+          if (!p.length) return '他翻了翻包：「算了，我这儿的你都有。」';
+          dropRelic(s, id);
+          var r = pickWeighted(s, p); grantRelic(s, r.id);
+          return '「' + old.name + '」换成了「' + r.name + '」：' + r.desc;
+        } },
+        { label: '不换', desc: '什么都不发生', run: function () { return '「再考虑考虑嘛。」'; } }
+      ] },
+    { id: 'blood', title: '黑市加油站', text: '「抽一点你车里的冷却液，换一箱高标号燃料。不会出事的，大概。」',
+      options: [
+        { label: '成交', desc: '失去 12% 耐久，之后每场开局燃料 +30', run: function (s) {
+          loseMax(s, 0.12); s.fuelBonus = (s.fuelBonus || 0) + 30; return '发动机咳了两声，然后转得比以前还欢。之后每场开局燃料 +30。';
+        } },
+        { label: '不了', desc: '什么都不发生', run: function () { return '你看了一眼那根脏兮兮的管子，走了。'; } }
+      ] },
+    { id: 'spring', title: '清泉', text: '一眼冒着气泡的泉水，据说能洗掉不干净的东西。',
+      options: [
+        { label: '净化', desc: '拆掉一件诅咒遗物（最新的那件）', need: function (s) { return curses(s).length > 0; }, run: function (s) {
+          var c = curses(s), r = Run.relicById(c[c.length - 1]);
+          dropRelic(s, r.id);
+          return '「' + r.name + '」沉进了泉底。';
+        } },
+        { label: '洗洗车', desc: '恢复 20% 耐久', run: function (s) { gainMax(s, 0.2); return '车洗干净了，连锈都少了几块。'; } }
+      ] },
+    { id: 'twins', title: '成对的箱子', text: '两只一模一样的箱子，标签上写着「配套出售」。',
+      options: [
+        { label: '买一对', desc: '50 金币：能和你手里某件凑成联动的遗物；凑不成就是随机普通遗物', need: function (s) { return s.gold >= 50; }, run: function (s) {
+          s.gold -= 50;
+          var want = [];
+          s.relics.forEach(function (id) {
+            Run.synergiesOf(id).forEach(function (x) { if (s.relics.indexOf(x.partner) < 0) want.push(x.partner); });
+          });
+          var r = want.length ? Run.relicById(pick(want)) : null;
+          if (r) { grantRelic(s, r.id); return '正好配上。「' + r.name + '」：' + r.desc; }
+          r = randomRelic(s, 'common');
+          if (r) return '配不上你手里的东西，不过也不赖。「' + r.name + '」：' + r.desc;
+          s.gold += 50;
+          return '箱子是空的。商人退了你 50 金币。';
+        } },
+        { label: '只拆一只卖掉', desc: '+35 金币', run: function (s) { s.gold += 35; return '拆开一看是一堆螺丝，卖了 35 金币。'; } }
+      ] },
+    { id: 'wreck', title: '坠毁的运输机', text: '一架运输机栽在沙里，货舱门半开着。',
+      options: [
+        { label: '搜货舱', desc: '随机一把武器获得随机改造', run: function (s) {
+          var slot = pick(['w1', 'w2', 'ss']), m = pick(modPool(false));
+          s.mods[slot].push(m.id);
+          return '货舱里有一套改装件。' + slotName(slot) + '装上了「' + m.name + '」。';
+        } },
+        { label: '拆发动机', desc: '得到「涡轮增压器」（已有就换 60 金币）', run: function (s) {
+          if (s.relics.indexOf('turbo') >= 0) { s.gold += 60; return '这台发动机你车上已经有一样的了，拆下来卖了 60 金币。'; }
+          grantRelic(s, 'turbo'); return '装上了运输机的涡轮。每回合多回 8 点燃料。';
+        } }
       ] }
   ];
   Run.eventById = function (id) { return byId(Run.EVENTS, id); };
 
+  /** 抽一个这局还没见过的事件；都见过了就从头再来 */
+  function pickEvent(state) {
+    var seen = state.seenEvents || (state.seenEvents = []);
+    var left = Run.EVENTS.filter(function (e) { return seen.indexOf(e.id) < 0; });
+    if (!left.length) { seen.length = 0; left = Run.EVENTS.slice(); }
+    var ev = pick(left);
+    seen.push(ev.id);
+    return ev.id;
+  }
+
+  /** 这个选项现在能不能选 */
+  Run.canChoose = function (state, opt) { return !opt.need || !!opt.need(state); };
+
+  /**
+   * 选了事件的某个选项。返回 'fight' 表示要打一场（state.node 已经换成战斗节点），
+   * 返回 true 表示有结果文字要看，false 表示没选成。
+   */
   Run.eventChoose = function (state, optIndex) {
     var p = state.pending;
     if (!p || p.kind !== 'event') return false;
     var ev = Run.eventById(p.id), opt = ev && ev.options[optIndex];
-    if (!opt) return false;
-    var text = opt.run(state);
+    if (!opt || !Run.canChoose(state, opt)) return false;
+    var res = opt.run(state);
     clampHp(state);
-    state.pending = { kind: 'note', title: ev.title, text: text };
+    if (res && res.fight) {
+      state.node = fightNode(state, state.step, res.fight);
+      state.node.fromEvent = ev.id;
+      state.pending = null;
+      return 'fight';
+    }
+    state.pending = { kind: 'note', title: ev.title, text: res };
     return true;
   };
 

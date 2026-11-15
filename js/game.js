@@ -55,7 +55,7 @@
     this.maxHp = v.hp; this.hp = cfg.hp != null ? Math.min(v.hp, cfg.hp) : v.hp;
     this.atk = v.atk; this.def = v.def;
     this.maxFuel = RZ.MAX_FUEL;
-    this.fuel = arc ? Math.min(RZ.MAX_FUEL, arc.startFuel + (this.perks.startFuel || 0)) : RZ.START_FUEL;
+    this.fuel = arc ? (this.perks.noStartFuel ? 0 : Math.min(RZ.MAX_FUEL, arc.startFuel + (this.perks.startFuel || 0))) : RZ.START_FUEL;
     this.spentThisTurn = 0;      // 本回合总耗油，决定这一手的延迟
     this.moveSpent = 0;          // 其中花在移动上的部分，跑太多要扣回油
     this.dealtThisTurn = 0;      // 本回合打出的伤害，打中人有回油奖励
@@ -350,6 +350,11 @@
   Game.prototype.arcadeTurnStart = function (u) {
     var pk = u.perks;
     u.turnsTaken++;
+    u.braced = false;                                    // 铁壁只护到再次轮到自己
+    if (pk.ambushDouble && u.firstShot) {                // 联动「首轮齐射」
+      u.buffDouble = true;
+      this.fx.text(u.x, u.y - 118, '首轮齐射', '#ff7a3d');
+    }
     if (pk.repair && u.hp < u.maxHp) this.heal(u, u.maxHp * pk.repair);
     if (pk.autoDouble && u.turnsTaken % 3 === 0) {
       u.buffDouble = true;
@@ -407,6 +412,12 @@
       }
       u.buffDouble = false;
       u.shotMode = null;
+      // 铁金刚「铁壁」：这一回合一步没挪，到下次轮到它之前少吃伤害
+      if (this.arc && u.perks.brace && u.alive) {
+        u.braced = u.moveSpent === 0;
+        if (u.braced) this.fx.text(u.x, u.y - 100, '架盾', '#8fe3d6');
+      }
+      if (this.thunderFor === u) this.thunderFor = null;
       // 按回合计的状态在「自己这一回合结束时」才递减。放在回合开始会少算一回合：
       // 挂 3 回合的麻痹，实际只能困住对方 2 个回合。
       if (u.buffPower > 0) u.buffPower--;
@@ -549,7 +560,20 @@
     // 加强攻击：这一发 +50%，对必杀也算；定位炮不打伤害，就不消耗它
     var mul = 1;
     if (u.buffPower > 0 && w.damage > 0) { mul = 1.5; u.buffPower = 0; }
-    if (this.arc && w.damage > 0) mul *= this.perkMul(u);
+    if (this.arc && w.damage > 0) mul *= this.perkMul(u, mode ? -1 : u.weaponIdx);
+    if (this.arc && w.damage > 0) {
+      var pk = u.perks;
+      // 托尔「雷鸣」：数开火次数，第三发的第一个落点引雷（见 explode）
+      if (pk.thunderEvery && !mode) {
+        u.shotsFired = (u.shotsFired || 0) + 1;
+        if (u.shotsFired % pk.thunderEvery === 0) { this.thunderFor = u; this.fx.text(u.x, u.y - 132, '雷鸣', '#f5b921'); }
+      }
+      // 诅咒「血契弹匣」：开火就掉血，但不会因此阵亡。直接扣，不走护甲 / 架盾
+      if (pk.selfHarm) {
+        var loss = Math.min(Math.floor(u.hp) - 1, Math.round(u.maxHp * pk.selfHarm));
+        if (loss > 0) { u.hp -= loss; this.fx.text(u.x, u.y - 64, '-' + loss, '#c8a0ff'); }
+      }
+    }
 
     // 双倍攻击：普通武器连打两发（必杀和道具弹除外）
     var twice = u.buffDouble && !mode && u.weaponIdx !== 2;
@@ -564,17 +588,31 @@
     if (!mode && u.weaponIdx === 2) this.say(u.name + ' 发动必杀 ' + w.name + '！', '#ffd166');
   };
 
-  /** 遗物给这一发的伤害倍率：先发制人、连击、狂战士、暴击 */
-  Game.prototype.perkMul = function (u) {
+  /**
+   * 遗物和战车被动给这一发的伤害倍率：先发制人、连击、狂战士、多面手、嗜血、乘风、暴击 / 哑火。
+   * idx 是这一发用的武器（0/1/2），道具弹是 -1——换不换手只看真武器。
+   */
+  Game.prototype.perkMul = function (u, idx) {
     var pk = u.perks, m = 1;
     if (pk.ambush && u.firstShot) { m *= 2; this.fx.text(u.x, u.y - 104, '先发制人 ×2', '#ffd166'); }
     u.firstShot = false;
     if (pk.combo) m *= 1 + pk.combo * u.streak;
     if (pk.berserk) m *= 1 + pk.berserk * (1 - Math.max(0, u.hp) / u.maxHp);
-    if (pk.crit && Math.random() < pk.crit) {
+    if (pk.variety && idx >= 0) {                        // 烈火「多面手」
+      if (u.lastWeaponIdx != null && idx !== u.lastWeaponIdx) { m *= 1 + pk.variety; this.fx.text(u.x, u.y - 146, '换手', '#ffd166'); }
+      u.lastWeaponIdx = idx;
+    }
+    if (u.bloodBuff) { m *= 1.4; u.bloodBuff = false; }  // 红龙「嗜血」：击破之后的下一发
+    if (pk.windRider && this.map.windMax) m *= 1 + pk.windRider * Math.abs(this.wind) / this.map.windMax;
+    // 暴击和哑火（诅咒「赌徒骰子」）掷同一颗骰子：小的一头是暴击，大的一头是哑火
+    var crit = (pk.crit || 0) + (pk.critPerStreak || 0) * u.streak, roll = Math.random();
+    if (crit && roll < crit) {
       m *= 1.6;
       this.fx.text(u.x, u.y - 120, '暴击！', '#ff5a5a', true);
       RZ.SFX.crit();
+    } else if (pk.dud && roll >= 1 - pk.dud) {
+      m *= 0.3;
+      this.fx.text(u.x, u.y - 120, '哑火', '#9fb3c8', true);
     }
     return m;
   };
@@ -596,7 +634,7 @@
     if (arc && apk.blast) radius *= 1 + apk.blast;
     var damage = w.damage * (dmgMul || 1);
     if (arc && w.isBarrel && apk.barrel) damage *= 2;
-    var dig = radius * (w.digMul || 1);
+    var dig = radius * (w.digMul || 1) * (arc && apk.dig ? 1 + apk.dig : 1);   // 奥丁「镇地」
     this.terrain.carve(x, y, dig);
     this.fx.boom(x, y, radius, w, this.map.ground);        // 每种武器落地的样子都不一样，见 render.js 的 BOOMS
     if (arc) this.spawnField(x, y, radius, w, attacker);   // 有些武器会在落点留下一块区域
@@ -604,7 +642,7 @@
     this.cam.shake = Math.max(this.cam.shake, Math.min(16, radius * 0.16) * (arc ? 1.5 : 1));
     RZ.SFX.explode({ big: radius > 64, kind: w.isBarrel ? 'gun' : RZ.lookOf(w).snd });
 
-    var fake = { damage: damage, radius: radius }, hitFoes = 0;
+    var fake = { damage: damage, radius: radius }, hitFoes = 0, hitList = [];
     for (var i = 0; i < this.units.length; i++) {
       var t = this.units[i];
       if (!t.alive) continue;
@@ -614,7 +652,16 @@
       if (t === directTarget) dmg = Math.round(dmg * RZ.DIRECT_BONUS);
       var foe = attacker && t.team !== attacker.team;
       if (arc && foe) {
-        hitFoes++;
+        hitFoes++; hitList.push(t);
+        if (t === directTarget && apk.precise) {         // 兰登「精准」
+          dmg = Math.round(dmg * (1 + apk.precise));
+          attacker.fuel = Math.min(attacker.maxFuel, attacker.fuel + 8);
+        }
+        if (apk.snipeCrit && Math.abs(t.x - attacker.x) > 1000) {   // 联动「狙击手」
+          dmg = Math.round(dmg * (1 + apk.snipeCrit));
+          this.fx.text(t.x, t.y - 132, '狙杀', '#ff5a5a', true);
+        }
+        if (apk.goldPerHit && !attacker.ai) this.style.gold += apk.goldPerHit;   // 联动「回收专家」
         if (t === directTarget) this.cheer(attacker, 'direct', '直击！', 5);
         if (Math.abs(t.x - attacker.x) > 1000 && !w.isBarrel) this.cheer(attacker, 'snipe', '超远狙击！', 8);
         if (w.isBarrel) this.cheer(attacker, 'barrel', '借桶杀人！', 6);
@@ -627,11 +674,13 @@
         var dirX = t.x >= x ? 1 : -1;
         if (Math.abs(t.x - x) < 3 && attacker) dirX = t.x >= attacker.x ? 1 : -1;
         var push = Math.min(9, 1.2 + dmg * 0.028) * (w.kb || 1) * (1 + (apk.kb || 0)) / t.scale * this.pushMul(t);
+        // 稀有改造「引力坍缩」：往爆心吸。按离爆心多远封顶，免得吸过头甩到另一边
+        if (w.pull && !w.isChild) push = -Math.min(push, Math.abs(t.x - x) / 14);
         t.vx += dirX * push;
         t.vy = Math.min(t.vy, -Math.min(7, 2 + push * 0.7));
         t.lastHitBy = attacker;
       }
-      if (w.stun && t.team !== (attacker ? attacker.team : -1)) {
+      if (w.stun && t.team !== (attacker ? attacker.team : -1) && !(arc && t.kit)) {   // Boss 不吃麻痹（稀有改造「电磁脉冲」）
         t.stunned = Math.max(t.stunned, w.stun);
         this.fx.text(t.x, t.y - 60, '麻痹', '#b98cff');
       }
@@ -654,6 +703,13 @@
 
     if (!arc) return;
     if (hitFoes >= 2) this.cheer(attacker, 'multi', '一炮双响！', 8);
+    // 托尔「雷鸣」：这一发的第一个落点引雷，六成威力
+    if (this.thunderFor && this.thunderFor === attacker && !w.isChild && !w.isAfter && !w.isBarrel) {
+      this.thunderFor = null;
+      this.strikeLightning(x, y, w, attacker, damage * 0.6);
+    }
+    // 稀有改造「连锁闪电」：从被炸到的敌人跳向最近的另一个
+    if (w.chain && hitList.length && !w.isChild) this.chainZap(hitList, w, attacker, damage);
     // 油桶：被波及就点着，隔几帧再炸，连锁才看得清
     for (i = 0; i < this.props.length; i++) {
       var pr = this.props[i];
@@ -674,11 +730,35 @@
     }
   };
 
+  /**
+   * 连锁闪电：电流从最后一个被打到的敌人跳向最近的、这一下还没挨过的敌人，五成威力，
+   * 跳的次数 = 装了几个这个改造。700px 外的够不着。
+   */
+  Game.prototype.chainZap = function (hit, w, attacker, damage) {
+    var from = hit[hit.length - 1], done = hit.slice();
+    for (var n = 0; n < w.chain; n++) {
+      var best = null, bd = 700;
+      for (var i = 0; i < this.units.length; i++) {
+        var t = this.units[i];
+        if (!t.alive || done.indexOf(t) >= 0 || (attacker && t.team === attacker.team)) continue;
+        var d = Math.hypot(t.x - from.x, t.y - from.y);
+        if (d < bd) { bd = d; best = t; }
+      }
+      if (!best) break;
+      this.effects.push({ type: 'zap', x0: from.x, y0: from.y - 20, x1: best.x, y1: best.y - 20, life: 16 });
+      this.fx.text(best.x, best.y - 110, '连锁闪电', '#f5b921');
+      RZ.SFX.thunder();
+      this.damage(best, RZ.explosionDamage({ damage: damage * 0.5, radius: 1 }, attacker, best, 0, 1), attacker);
+      done.push(best); from = best;
+    }
+  };
+
   /** 集束改造：落点再蹦出几颗小炸弹 */
   Game.prototype.cluster = function (x, y, w, attacker, dmgMul) {
     var cw = Object.create(w);
     cw.isChild = true; cw.cluster = 0; cw.onImpact = null; cw.count = 1; cw.splitAt = null;
-    cw.damage = w.damage * 0.35; cw.radius = Math.max(24, w.radius * 0.6);
+    cw.damage = w.damage * (w.clusterMul || 0.35);
+    cw.radius = Math.max(24, w.radius * (w.clusterMul ? 0.7 : 0.6));
     var n = Math.min(9, w.cluster);
     for (var i = 0; i < n; i++) {
       var a = (i + 0.5) / n * Math.PI;                 // 朝上半圆撒开
@@ -806,6 +886,7 @@
       if (ev && ev.type !== 'bounce') break;
     }
     var keep = u.perks.scope ? 1 : 0.45;
+    if (u.perks.blind) keep = u.perks.scope ? 0.45 : 0.18;     // 诅咒「短视镜片」；带测距仪等于抵消
     pts.length = Math.max(2, ((pts.length / 2 * keep) | 0) * 2);
     return pts;
   };
@@ -886,7 +967,10 @@
   Game.prototype.damage = function (target, amount, attacker, color, direct) {
     if (!target.alive || amount <= 0) return;
     var arc = this.arc, tpk = target.perks;
+    // 毒蜘蛛「蚀甲」：目标身上挂着灼烧 / 中毒时多吃伤害
+    if (arc && attacker && attacker.perks.corrode && target.dots.length) amount = Math.round(amount * (1 + attacker.perks.corrode));
     if (arc && tpk.armor) amount = Math.max(1, Math.round(amount * (1 - tpk.armor)));
+    if (arc && tpk.brace && target.braced) amount = Math.max(1, Math.round(amount * (1 - tpk.brace)));
     if (arc && target.kit) {                            // 护卫在场：Boss 只吃一部分伤害
       var gm = this.guardMul(target);
       if (gm < 1) { amount = Math.max(1, Math.round(amount * gm)); this.fx.text(target.x, target.y - 118, '护卫替它挡了一部分', '#8fe3d6'); }
@@ -916,7 +1000,7 @@
     // 应急核心：只救得了被打死的，掉出地图救不回来
     if (this.arc && !silent && u.reviveLeft > 0) {
       u.reviveLeft--; u.revived = true;
-      u.hp = Math.round(u.maxHp * 0.4);
+      u.hp = Math.round(u.maxHp * (u.perks.phoenix ? 1 : 0.4));   // 联动「浴火重生」直接满血
       u.dots.length = 0;
       this.fx.burst(u.x, u.y - 18, 60, ['#bff6ff', '#ffffff', '#5ad27a']);
       this.fx.text(u.x, u.y - 96, '应急核心启动！', '#5ad27a', true);
@@ -931,7 +1015,12 @@
       var by = attacker || u.lastHitBy;
       if (by && by.team !== u.team) {
         this.killsThisTurn++;
-        if (silent) this.cheer(by, 'ringout', '击飞出界！', 15);
+        if (silent) this.cheer(by, 'ringout', '击飞出界！', 15 + (by.perks.ringGold || 0));
+        if (by.perks.bloodlust && by.alive) {            // 红龙「嗜血」
+          this.heal(by, by.maxHp * 0.15);
+          by.bloodBuff = true;
+          this.fx.text(by.x, by.y - 118, '嗜血', '#ff5a5a', true);
+        }
         if (this.killsThisTurn >= 2) this.cheer(by, 'double', '双杀！', 12);
         if (u.boss) this.cheer(by, 'boss', 'BOSS 击破！', 30);
       }
@@ -1443,6 +1532,7 @@
     for (i = 0; i < this.effects.length; i++) {
       var e = this.effects[i];
       if (e.type === 'bolt') RZ.drawBolt(ctx, e.x, e.y0, e.y1, e.life);
+      else if (e.type === 'zap') RZ.drawZap(ctx, e.x0, e.y0, e.x1, e.y1, e.life);
     }
 
     this.fx.drawMarks(ctx, this.t);

@@ -47,8 +47,9 @@
         '<h3 class="panel-h">远征怎么打</h3><ul class="rules run-brief">' +
         '<li>三个区域，每个区域五层，最后一层是 <b>Boss</b>。耐久带进下一场，输一场就结束。</li>' +
         '<li>每场打赢<b>三选一</b>：武器改造可以反复叠，遗物是全局被动——叠出你自己的流派。</li>' +
+        '<li>每辆车有一个只在远征里生效的<b>被动</b>；成对的遗物凑齐会触发<b>联动</b>。</li>' +
         '<li>爆炸会把战车<b>掀飞</b>，油桶一点就<b>连锁</b>；打得漂亮有额外赏金。</li></ul></div>' +
-      '<div class="panel"><div class="veh-detail">' + App.detailHTML(v) + '</div>' +
+      '<div class="panel"><div class="veh-detail">' + App.detailHTML(v) + '</div>' + passiveHTML(v.id) +
         '<h3 class="panel-h">难度</h3><div class="chips">' + ascChips + '</div>' +
         (meta.asc === 0 ? '<p class="run-tip">通关一次后开放进阶难度。</p>'
           : '<p class="run-tip">每级进阶：敌人耐久 +8%、攻击 +6%。通关当前最高级解锁下一级。</p>') +
@@ -59,6 +60,26 @@
         '<p class="run-tip">战绩：远征 ' + meta.runs + ' 次 · 通关 ' + meta.wins + ' 次 · 单次最多打赢 ' + meta.best + ' 场</p>' +
         backupHTML() +
       '</div></div>';
+  }
+
+  /** 战车的远征被动：营地详情和侧栏都用这一块 */
+  function passiveHTML(vid) {
+    var ps = Run.passiveOf(vid);
+    return ps ? '<div class="passive"><u>远征被动</u><b>' + ps.name + '</b><span>' + ps.desc + '</span></div>' : '';
+  }
+
+  /**
+   * 遗物和联动的关系，写在遗物卡 / 侧栏遗物条下面。
+   * on：手里已经有另一半（拿了就凑成）；否则只提一句「和谁凑」。
+   */
+  function synergyHint(id, owned) {
+    var out = '';
+    Run.synergiesOf(id).forEach(function (x) {
+      var partner = Run.relicById(x.partner), on = owned.indexOf(x.partner) >= 0;
+      out += '<em class="syn' + (on ? ' on' : '') + '">' + (on ? '凑成联动「' + x.syn.name + '」：' + x.syn.desc
+        : '联动：配「' + partner.name + '」→「' + x.syn.name + '」') + '</em>';
+    });
+    return out;
   }
 
   // ---- 进度备份 ----
@@ -139,10 +160,13 @@
       }
       pips += '</div>';
     }
-    var relics = '';
+    var relics = '', syns = '';
     state.relics.forEach(function (id) {
       var r = Run.relicById(id);
-      relics += '<div class="relic ' + r.rarity + '"><b>' + r.name + '</b><span>' + r.desc + '</span></div>';
+      relics += '<div class="relic ' + r.rarity + '"><b>' + r.name + (r.rarity === 'curse' ? '<i>诅咒</i>' : '') + '</b><span>' + r.desc + '</span></div>';
+    });
+    Run.activeSynergies(state).forEach(function (sy) {
+      syns += '<div class="relic syn"><b>' + sy.name + '<i>联动</i></b><span>' + sy.desc + '</span></div>';
     });
     var items = '';
     for (i = 0; i < RZ.MAX_ITEMS; i++) {
@@ -154,10 +178,11 @@
       '<div class="rs-head"><span data-portrait="' + v.id + '"></span><div><b>' + v.name + '</b>' +
         '<div class="mbar"><div class="mfill hp" style="width:' + Math.round(state.hp / hpMax * 100) + '%"></div></div>' +
         '<small>耐久 ' + state.hp + ' / ' + hpMax + '　攻击 ' + v.atk + '</small></div></div>' +
+      passiveHTML(state.vehicleId) +
       '<div class="act-pips">' + pips + '</div>' +
       '<h3 class="panel-h">武器</h3>' + weaponLine('1', v.w1) + weaponLine('2', v.w2) + weaponLine('必杀', v.ss) +
       '<h3 class="panel-h">道具</h3><div class="ritems">' + items + '</div>' +
-      '<h3 class="panel-h">遗物 <em>' + state.relics.length + '</em></h3>' +
+      '<h3 class="panel-h">遗物 <em>' + state.relics.length + '</em></h3>' + syns +
       (relics || '<p class="run-tip">还没有遗物。打赢战斗、逛商店、碰运气都能拿到。</p>') +
       '<button class="btn btn-ghost run-quit" data-act="quit">' + (quitArmed ? '再点一次确认放弃' : '放弃远征') + '</button>' +
       '</div>';
@@ -214,13 +239,16 @@
 
   function offerCard(c, i, from, cost, sold) {
     var kind, name, desc, cls = c.type, picking = slotPick && slotPick.from === from && slotPick.index === i;
+    var extra = '';
     if (c.type === 'relic') {
       var r = Run.relicById(c.id);
-      kind = r.rarity === 'boss' ? 'Boss 遗物' : r.rarity === 'rare' ? '稀有遗物' : '遗物';
+      kind = r.rarity === 'boss' ? 'Boss 遗物' : r.rarity === 'rare' ? '稀有遗物' : r.rarity === 'curse' ? (c.black ? '黑市　诅咒遗物' : '诅咒遗物') : '遗物';
       name = r.name; desc = r.desc; cls += ' ' + r.rarity;
+      extra = synergyHint(c.id, state.relics);
     } else if (c.type === 'mod') {
       var m = Run.modById(c.id);
-      kind = '武器改造'; name = m.name; desc = m.desc;
+      kind = m.rare ? '稀有改造' : '武器改造'; name = m.name; desc = m.desc;
+      if (m.rare) cls += ' rare';
     } else if (c.type === 'item') {
       var it = RZ.itemById(c.id);
       kind = '道具'; name = it.name; desc = it.desc;
@@ -233,7 +261,8 @@
       : picking ? slotButtons(from, i)
       : '<button class="btn btn-primary" data-act="take" data-from="' + from + '" data-i="' + i + '"' +
         (cant || full ? ' disabled' : '') + '>' + (cost != null ? (full ? '道具栏已满' : cost + ' 金币') : '拿这个') + '</button>';
-    return '<div class="offer ' + cls + (sold ? ' gone' : '') + '"><u>' + kind + '</u><b>' + name + '</b><p>' + desc + '</p>' + btn + '</div>';
+    return '<div class="offer ' + cls + (sold ? ' gone' : '') + '"><u>' + kind + '</u><b>' + name + '</b><p>' + desc + '</p>' +
+      (extra ? '<div class="syns">' + extra + '</div>' : '') + btn + '</div>';
   }
 
   function pendingHTML() {
@@ -249,19 +278,23 @@
       for (i = 0; i < p.stock.length; i++) h += offerCard(p.stock[i], i, 'shop', p.stock[i].cost, p.stock[i].sold);
       return '<div class="run-main"><h3 class="run-title">商店<small>你有 ' + state.gold + ' 金币</small></h3>' +
         '<div class="offers shop-grid">' + h + '</div>' +
-        '<button class="btn run-skip" data-act="leave">离开商店</button></div>';
+        '<div class="row run-skip"><button class="btn" data-act="reroll"' + (state.gold < Run.rerollCost(state) ? ' disabled' : '') + '>刷新货架（' +
+          Run.rerollCost(state) + ' 金币）</button><button class="btn" data-act="leave">离开商店</button></div></div>';
     }
     if (p.kind === 'rest') {
-      Run.REST.forEach(function (o) {
-        h += '<div class="offer rest"><u>修整</u><b>' + o.name + '</b><p>' + o.desc + '</p>' +
+      var restOpts = Run.restOptions(state);
+      restOpts.forEach(function (o) {
+        h += '<div class="offer rest' + (o.id === 'purify' ? ' curse' : '') + '"><u>' + (o.id === 'purify' ? '净化' : '修整') + '</u><b>' + o.name + '</b><p>' + o.desc + '</p>' +
           '<button class="btn btn-primary" data-act="rest" data-id="' + o.id + '">选这个</button></div>';
       });
-      return '<div class="run-main"><h3 class="run-title">修整<small>三选一</small></h3><div class="offers">' + h + '</div></div>';
+      return '<div class="run-main"><h3 class="run-title">修整<small>' + (restOpts.length > 3 ? '四选一' : '三选一') + '</small></h3><div class="offers' +
+        (restOpts.length > 3 ? ' four' : '') + '">' + h + '</div></div>';
     }
     if (p.kind === 'event') {
       var ev = Run.eventById(p.id);
       ev.options.forEach(function (o, k) {
-        h += '<button class="btn event-opt" data-act="event" data-i="' + k + '"><b>' + o.label + '</b><small>' + o.desc + '</small></button>';
+        h += '<button class="btn event-opt" data-act="event" data-i="' + k + '"' + (Run.canChoose(state, o) ? '' : ' disabled') +
+          '><b>' + o.label + '</b><small>' + o.desc + '</small></button>';
       });
       return '<div class="run-main"><div class="event"><h3>' + ev.title + '</h3><p>' + ev.text + '</p>' + h + '</div></div>';
     }
@@ -362,7 +395,8 @@
     else if (act === 'skip') { slotPick = null; if (Run.takeReward(state, -1)) RZ.SFX.coin(); }
     else if (act === 'leave') { slotPick = null; Run.leave(state); }
     else if (act === 'rest') { if (Run.rest(state, id)) RZ.SFX.heal(); }
-    else if (act === 'event') Run.eventChoose(state, i);
+    else if (act === 'event') { if (Run.eventChoose(state, i) === 'fight') { startBattle(); return; } }
+    else if (act === 'reroll') { if (Run.reroll(state)) RZ.SFX.coin(); }
 
     if (state && !state.over) Run.save(state);
     render();

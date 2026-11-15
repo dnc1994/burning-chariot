@@ -1400,6 +1400,19 @@
     ctx.restore();
   };
 
+  /** 连锁闪电：两点之间一道折线，和落雷同一套墨 + 黄 + 纸三层 */
+  RZ.drawZap = function (ctx, x0, y0, x1, y1, life) {
+    if (life < 6 && (life & 1)) return;
+    ctx.save();
+    ctx.beginPath();
+    zig(ctx, x0, y0, x1, y1, 14, 9);
+    ctx.lineJoin = 'miter';
+    ctx.lineWidth = 11; ctx.strokeStyle = INK; ctx.stroke();
+    ctx.lineWidth = 6; ctx.strokeStyle = YELLOW; ctx.stroke();
+    ctx.lineWidth = 2; ctx.strokeStyle = PAPER; ctx.stroke();
+    ctx.restore();
+  };
+
   /** 炮口指示线：只表示角度，与力度无关 */
   RZ.drawAimRay = function (ctx, u, color) {
     var a = u.aim * Math.PI / 180;

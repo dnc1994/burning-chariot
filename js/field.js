@@ -38,6 +38,8 @@
 
   Game.prototype.addHazard = function (type, x, y, r, rounds, power, owner) {
     var i, h;
+    // 赤焰「燎原」：它留下的地火多烧一轮、伤害 +50%
+    if (type === 'fire' && this.arc && owner && owner.perks && owner.perks.pyro) { rounds += 1; power = Math.round(power * 1.5); }
     // 同一种东西落在一起就并成一块（散射、地毯轰炸一落就是好几发），取更久、更大的
     for (i = 0; i < this.hazards.length; i++) {
       h = this.hazards[i];
@@ -113,6 +115,7 @@
       if (seen[h.type] || !this.inHazard(h, u)) continue;
       seen[h.type] = true;
       if (h.type === 'fire') {
+        if (u.perks.pyro) continue;                     // 赤焰站在火里不受伤
         this.fx.text(u.x, u.y - 100, '地火', '#ff9d3d');
         this.damage(u, h.power, null, '#ff9d3d');
         this.turnsSinceDamage = 0;

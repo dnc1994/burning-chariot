@@ -554,6 +554,15 @@ body.touch-mode .hud-bottom-left { bottom: 82px; }
 .run-side .relic.rare { border-left-color: var(--yellow); }
 .run-side .relic.boss { border-left-color: var(--red); }
 .run-side .relic b { display: block; font-family: var(--display); font-weight: 400; font-size: 17px; }
+/* 诅咒：墨色的带子；联动：整条黄底——手里凑成的东西要一眼看得出来 */
+.run-side .relic.curse { border-left-color: var(--ink); background: var(--paper-3); }
+.run-side .relic.syn { border-left-color: var(--red); background: var(--yellow); }
+.run-side .relic b i { font-style: normal; font-size: 12px; margin-left: 6px; padding: 0 5px 1px; background: var(--ink); color: var(--paper); vertical-align: 2px; }
+/* 战车的远征被动：营地详情、侧栏都是这一块 */
+.passive { margin: 12px 0 4px; padding: 7px 10px 9px; background: var(--paper-2); border: 2.5px solid var(--ink); }
+.passive u { text-decoration: none; font-family: var(--display); font-size: 13px; padding: 1px 6px 2px; background: var(--teal); color: var(--paper); margin-right: 8px; }
+.passive b { font-family: var(--display); font-weight: 400; font-size: 19px; }
+.passive span { display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.6; color: var(--ink-soft); }
 .run-side .relic span { font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
 .run-quit { width: 100%; margin-top: 14px; font-size: 15px; padding: 5px; }
 
@@ -608,6 +617,13 @@ body.touch-mode .hud-bottom-left { bottom: 82px; }
 .offer.mod u { background: var(--teal); }
 .offer.rare u { background: var(--yellow); color: var(--ink); }
 .offer.boss u { background: var(--red); }
+.offer.curse u { background: var(--ink); color: var(--yellow); }
+.offer.curse { background: var(--paper-2); }
+.offers.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.syns { display: grid; gap: 5px; padding: 0 14px 12px; }
+.syn { font-style: normal; font-size: 12px; line-height: 1.5; color: var(--ink-soft); padding-left: 8px; border-left: 3px solid var(--ink-dim); }
+.syn.on { color: var(--ink); background: var(--yellow); border: 2px solid var(--ink); padding: 3px 7px 4px; font-weight: 600; }
+.run-skip.row { display: flex; gap: 12px; }
 .offer.item u, .offer.rest u, .offer.repair u { background: #4f9a35; }
 .offer.gone { background: var(--paper-3); box-shadow: none; }
 .offer .btn { margin: 0 14px 14px; padding: 5px 12px 7px; font-size: 19px; }
