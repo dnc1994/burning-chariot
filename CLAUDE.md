@@ -316,6 +316,10 @@ test/hud-writes.js 计数版 DOM 桩件 + 接管 rAF，测 HUD 每帧写了多�
 18. **回合开头要改 `aiTimer` / 风向的东西，得放在 `beginTurn` 里它们被赋值之后。**
     Boss 的「等上回合圈的地炸完再瞄」最初写在 `arcadeTurnStart` 里，被后面一行 `this.aiTimer = …` 盖掉了。
     现在 `fieldTurnStart` / `bossTurnStart` 都在 `stepWind()` 之后调用。
+19. **拿来算数组下标的数必须是整数。** `Terrain.carve()` 的半径带小数时，循环变量 x / y 也带小数，
+    `mask[y * W + x]` 的下标成了小数——写类型数组不报错，但什么也没写进去，于是**整个坑消失**。
+    遗物「爆破专家」（范围 +15%）让所有武器都炸不动地，几把 `digMul` 带小数的武器从一开始就挖不了坑。
+    现在 `carve` 开头就取整，`test/run-mode.js` 有「三十把武器 + 爆破专家」的守卫。
 17. **`main.js` 里的定时器要判空。** 无头测试的沙箱没有 `setInterval`，
     标题主图的动画因此炸过一次。`test/hud-writes.js` 会整个加载 `main.js`。
 

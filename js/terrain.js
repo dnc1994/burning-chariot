@@ -242,6 +242,10 @@
    */
   Terrain.prototype.carve = function (cx, cy, r) {
     cx |= 0; cy |= 0;
+    // 半径必须取整：下面拿 x / y 直接算数组下标，带小数的半径会让边界带小数，
+    // 下标变成小数、写进类型数组等于什么都没写——整个坑就没了，而且不报错。
+    // （裂地三连 44 × 1.2 = 52.8、「爆破专家」的 +15% 都踩过这个坑。）
+    r = Math.max(1, Math.round(r));
     var rim = r + 9;
     var x0 = Math.max(0, cx - rim), x1 = Math.min(WORLD_W - 1, cx + rim);
     var y0 = Math.max(0, cy - rim), y1 = Math.min(WORLD_H - 1, cy + rim);

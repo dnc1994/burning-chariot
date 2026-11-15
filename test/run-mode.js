@@ -56,6 +56,27 @@ module.exports = function runModeTests(RZ, check, head) {
     check(g.units[1].x === x0, '经典规则爆炸不会横向击飞');
   }
 
+  // ---------- 带小数的爆炸半径也要能挖坑 ----------
+  head('地形：任何半径都挖得动');
+  {
+    const solid = (t) => { let n = 0; for (let i = 0; i < t.mask.length; i++) n += t.mask[i]; return n; };
+    const g = arena();
+    const y = g.terrain.groundBelow(900, 0), n0 = solid(g.terrain);
+    g.terrain.carve(900, y, 52.8);
+    const dug = n0 - solid(g.terrain);
+    check(dug > 3000, '半径带小数（52.8）照样挖出坑', `挖掉 ${dug} 像素`);
+    // 每辆车的每把武器，配上「爆破专家」的 +15%，都得真的把地炸掉
+    const dead = [];
+    RZ.VEHICLES.forEach((v) => ['w1', 'w2', 'ss'].forEach((k) => {
+      const a = arena(null, null, 1200);
+      a.units[0].perks = { blast: 0.15 };
+      const gy = a.terrain.groundBelow(900, 0), b0 = solid(a.terrain);
+      a.explode(900, gy, v[k], a.units[0], null, 1);
+      if (b0 - solid(a.terrain) < 300) dead.push(v[k].name);
+    }));
+    check(dead.length === 0, '三十把武器 + 爆破专家：每一把都炸得动地', dead.join('、') || '全部通过');
+  }
+
   // ---------- 节奏 ----------
   head('爽快规则：节奏');
   {
