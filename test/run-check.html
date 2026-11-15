@@ -5,7 +5,7 @@
 <iframe id="f" src="../index.html"></iframe>
 <script>
 /* 远征各界面的截图自检，用法同 ui-check.html：
-   ?stage=hub|map|boss|reward|shop|rest|event|over|battle|charge|bossfight|flow
+   ?stage=hub|backup|import|map|boss|reward|shop|rest|event|over|battle|charge|bossfight|field|flow
    battle / charge 会真的进一场远征战斗（爽快规则），charge 额外按住空格看弹道预览。 */
 var stage = new URLSearchParams(location.search).get('stage') || 'map';
 document.getElementById('f').onload = function () {
@@ -13,6 +13,24 @@ document.getElementById('f').onload = function () {
   try { w.localStorage.removeItem('rz-run'); } catch (e) {}
   d.querySelector('[data-go="run"]').click();
   if (stage === 'hub') return;
+  if (stage === 'backup') {                       // 营地里展开「导出进度」
+    var m0 = Run.loadMeta(); m0.sinceBackup = 3; m0.medals = 9; Run.saveMeta(m0);
+    RZ.RunUI.render();
+    d.querySelector('[data-act="bk-export"]').click();
+    d.querySelector('.run-root').scrollTop = 9999;
+    return;
+  }
+  if (stage === 'import') {                       // 粘贴一串进度码 → 读取 → 看到覆盖确认
+    var keep = Run.loadMeta(), far = Run.newRun('honglong');
+    far.act = 1; far.step = 2; Run.save(far);
+    Run.saveMeta({ medals: 23, unlocked: ['liehuo', 'tiejingang', 'beibeilong', 'honglong'], wins: 1, asc: 1, runs: 6, best: 11 });
+    var code = Run.exportCode();
+    Run.clear(); Run.saveMeta(keep);
+    d.querySelector('[data-act="bk-import"]').click();
+    d.getElementById('bk-in').value = code;
+    d.querySelector('[data-act="bk-read"]').click();
+    return;
+  }
 
   var s = Run.newRun('liehuo');
   s.relics = ['crit', 'after', 'tank']; s.mods.w1 = ['split', 'cluster']; s.mods.ss = ['burn']; s.gold = 135; s.hp = 640;
@@ -25,7 +43,7 @@ document.getElementById('f').onload = function () {
   if (stage === 'boss' || stage === 'bossfight') { s.step = 4; }
   RZ.RunUI._set(s);
   if (stage === 'reward') d.querySelector('.offer.mod [data-act="take"]').click();   // 展开「装到哪把武器」
-  if (['battle', 'charge', 'flow', 'bossfight'].indexOf(stage) < 0) return;
+  if (['battle', 'charge', 'flow', 'bossfight', 'field'].indexOf(stage) < 0) return;
 
   d.querySelector('[data-act="enter"]').click();
   setTimeout(function () {
@@ -36,6 +54,17 @@ document.getElementById('f').onload = function () {
       g.startCharge();
       for (i = 0; i < 48; i++) g.update(16);
       g.banner = { text: '直击！', sub: '+5 金', life: 60, max: 70 };
+    }
+    if (stage === 'field') {                      // 四种区域一字排开 + 一块 Boss 警戒线，镜头对着玩家
+      var me = g.units[0], gy = function (x) { return g.terrain.groundBelow(x, 0); };
+      g.addHazard('fire', me.x + 150, gy(me.x + 150), 60, 2, 34, me);
+      g.addHazard('pool', me.x + 300, gy(me.x + 300), 44, 3, 24, me);
+      g.addHazard('web', me.x + 450, gy(me.x + 450), 80, 3, 0, me);
+      g.addHazard('twister', me.x + 620, gy(me.x + 620) - 20, 52, 2, 0, me);
+      g.telegraphs.push({ x: me.x - 10, r: 62, owner: g.units[1], strike: 'mortar', power: 150, born: 0, seed: 1 });
+      g.cam.x = g.cam.tx = Math.max(0, me.x - 220);
+      g.cam.y = g.cam.ty = Math.max(0, me.y - g.viewH * 0.55);
+      g.updateCamera = function () {};
     }
     if (stage === 'bossfight') {                  // 镜头拉到 Boss 身上，看体型和油桶
       var boss = g.units[1];

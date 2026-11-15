@@ -27,7 +27,7 @@ function loadRZ() {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  for (const f of ['data.js', 'terrain.js', 'physics.js', 'render.js', 'audio.js', 'ai.js', 'game.js', 'run.js']) {
+  for (const f of ['data.js', 'terrain.js', 'physics.js', 'render.js', 'audio.js', 'ai.js', 'game.js', 'field.js', 'run.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, 'js', f), 'utf8'), sandbox, { filename: f });
   }
   sandbox.RZ.SFX.setMuted(true);

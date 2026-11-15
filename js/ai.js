@@ -26,11 +26,21 @@
     };
     var impacts = [], guard = 0;
     var queue = shots.slice();
+    // 爽快规则：炮弹半路撞上油桶会就地起爆，电脑算弹道时得知道这件事
+    var props = game.arc && game.props.length ? game.props : null;
     while (queue.length && guard < 4000) {
       var p = queue.shift();
       for (var i = 0; i < 600; i++) {
         guard++;
         var ev = RZ.step(p, env);
+        if (!ev && props && weapon.damage > 0) {
+          for (var b = 0; b < props.length; b++) {
+            if (Math.abs(p.x - props[b].x) < 11 && p.y > props[b].y - 24 && p.y < props[b].y + 2) {
+              ev = { type: 'hit', x: p.x, y: p.y, target: null };
+              break;
+            }
+          }
+        }
         if (!ev) continue;
         if (ev.type === 'split') { break; }
         if (ev.type === 'bounce') continue;
@@ -63,6 +73,28 @@
           score += dmg;
           enemyDmg += dmg;
           if (dmg >= t.hp) score += 260;                  // 能补刀就补刀
+          // 爽快规则：爆炸会把人掀出去。目标身后要是没有地，这一炮能直接把它打出界
+          if (game.arc && !t.perks.anchor) {
+            var dir = Math.abs(tp.x - im.x) > 3 ? (tp.x > im.x ? 1 : -1) : (tp.x >= unit.x ? 1 : -1);
+            var ex = Math.max(2, Math.min(RZ.WORLD_W - 2, tp.x + dir * 90));
+            if (game.terrain.groundBelow(ex, Math.max(0, tp.y - 60)) >= RZ.WORLD_H - 4) score += 90;
+          }
+        }
+      }
+      // 爽快规则：落点够得着油桶，就把油桶那一炸也算进来——可能是白捡的伤害，也可能炸到自己
+      if (game.arc && game.props.length && !weapon.isBarrel) {
+        for (var b = 0; b < game.props.length; b++) {
+          var pr = game.props[b];
+          if (Math.hypot(pr.x - im.x, (pr.y - 10) - im.y) >= weapon.radius + 16) continue;
+          for (k = 0; k < game.units.length; k++) {
+            var o = game.units[k];
+            if (!o.alive) continue;
+            var op = game.knownPos(unit.team, o);
+            var bd = RZ.explosionDamage(RZ.BARREL, unit, o, Math.hypot(op.x - pr.x, (op.y - 16) - (pr.y - 10)), RZ.BARREL.radius);
+            if (bd <= 0) continue;
+            if (o.team === unit.team) score -= bd * (o === unit ? 3.0 : 1.8);
+            else { score += bd; enemyDmg += bd; if (bd >= o.hp) score += 260; }
+          }
         }
       }
     }
@@ -238,6 +270,11 @@
           : (nearPos.x >= unit.x ? 1 : -1);
         plan.moveSteps = Math.round(Math.min(breakingStale ? 220 : 150, spare / v.moveCost / 1.7));
       }
+    }
+    // 脚下是地火、毒池、龙卷或者 Boss 圈的地：什么都别管，先走出去（爽快规则才有这些）
+    if (!isRethink && game.escapePlan) {
+      var esc = game.escapePlan(unit);
+      if (esc) { plan.moveDir = esc.dir; plan.moveSteps = esc.steps; }
     }
     return plan;
   };

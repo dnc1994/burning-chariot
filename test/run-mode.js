@@ -248,6 +248,213 @@ module.exports = function runModeTests(RZ, check, head) {
     check(g.projectiles.length === 3, '集束：落点蹦出三颗子弹药');
   }
 
+  // ---------- 留在场上的区域 ----------
+  head('场地区域：地火 / 毒池 / 蛛网 / 龙卷');
+  {
+    const oil = V('chiyan').w1;
+    const c = mk();
+    flatten(c);
+    c.explode(900, 590, oil, c.units[0], null, 1);
+    check(c.hazards.length === 0, '经典规则下武器不留任何区域');
+
+    const g = arena();
+    const me = g.units[0], foe = g.units[1];
+    g.explode(foe.x, foe.y - 4, oil, me, null, 1);
+    check(g.hazards.length === 1 && g.hazards[0].type === 'fire' && g.hazards[0].rounds === 2, '燃油弹落地留下两轮地火');
+    settle(g, 200);
+    foe.x = g.hazards[0].x; foe.y = g.terrain.groundBelow(foe.x, 0); foe.airborne = false;
+    const hp0 = foe.hp;
+    g.fieldTurnStart(foe);
+    check(foe.hp === hp0 - 34, '回合开始时站在地火里挨烧', `-${hp0 - foe.hp}`);
+    const mine = me.hp; me.x = foe.x + 10; me.y = foe.y;
+    g.fieldTurnStart(me);
+    check(me.hp < mine, '放火的人自己站进去也烧');
+    me.x = foe.x + 400; me.y = g.terrain.groundBelow(me.x, 0);
+    const safe = me.hp;
+    g.fieldTurnStart(me);
+    check(me.hp === safe, '站在火外面没事');
+    g.fieldRoundStart(); check(g.hazards.length === 1 && g.hazards[0].rounds === 1, '每过一轮少一轮');
+    g.fieldRoundStart(); check(g.hazards.length === 0, '到时间就熄了');
+  }
+  {
+    const g = arena();
+    g.addHazard('fire', 800, 600, 50, 2, 30, null);
+    g.addHazard('fire', 840, 600, 50, 3, 20, null);
+    check(g.hazards.length === 1 && g.hazards[0].rounds === 3 && g.hazards[0].power === 30, '落在一起的同类区域并成一块');
+    g.addHazard('pool', 840, 600, 40, 3, 24, null);
+    check(g.hazards.length === 2, '不同类的各算各的');
+    const y0 = g.hazards[0].y;
+    g.terrain.carve(820, 600, 70);
+    g.placeHazard(g.hazards[0]);
+    check(g.hazards[0].y > y0 + 20, '地被炸低了，火跟着掉下去', `${Math.round(y0)} → ${Math.round(g.hazards[0].y)}`);
+  }
+  {
+    const g = arena();
+    const foe = g.units[1];
+    g.addHazard('pool', foe.x, foe.y, 44, 3, 24, null);
+    g.fieldTurnStart(foe);
+    check(foe.dots.some((d) => d.type === 'poison' && d.damage === 24), '站在毒池里会中毒');
+
+    const w = arena();
+    const u = w.units[0];
+    const out = u.fuel; w.moveActive(1); const costOut = out - u.fuel;
+    w.addHazard('web', u.x, u.y, 80, 3, 0, null);
+    const inn = u.fuel; w.moveActive(1); const costIn = inn - u.fuel;
+    check(Math.abs(costIn / costOut - 3) < 0.01, '蛛网里移动耗油 ×3', `${costOut.toFixed(3)} → ${costIn.toFixed(3)}`);
+    const a = arena(), b = arena();
+    b.addHazard('web', b.units[1].x, b.units[1].y, 80, 3, 0, null);
+    a.explode(a.units[1].x - 22, a.units[1].y - 14, V('liehuo').w1, a.units[0], null, 1);
+    b.explode(b.units[1].x - 22, b.units[1].y - 14, V('liehuo').w1, b.units[0], null, 1);
+    check(Math.abs(b.units[1].vx) < Math.abs(a.units[1].vx) * 0.35, '蛛网里被击飞的力道只剩三成');
+  }
+  {
+    const g = arena(null, null, 600);
+    const foe = g.units[1], x0 = foe.x;
+    g.wind = g.map.windMax * 0.8;
+    g.addHazard('twister', foe.x, foe.y - 20, 52, 2, 0, g.units[0]);
+    g.fieldTurnStart(foe);
+    check(foe.airborne && foe.vx > 3 && foe.vy < 0, '龙卷把人卷起来，顺风甩出去');
+    settle(g, 300);
+    check(foe.x > x0 + 60, '落到了下风处', `位移 ${Math.round(foe.x - x0)}px`);
+    const h = arena(null, { perks: { anchor: 1 } });
+    h.addHazard('twister', h.units[1].x, h.units[1].y - 20, 52, 2, 0, null);
+    h.fieldTurnStart(h.units[1]);
+    check(!h.units[1].airborne, '磁力底盘卷不动');
+  }
+  {
+    const g = arena();
+    const ai = g.units[1];
+    check(g.escapePlan(ai) === null, '脚下没危险时电脑不用躲');
+    g.addHazard('fire', ai.x + 10, ai.y, 60, 2, 34, null);
+    const esc = g.escapePlan(ai);
+    check(esc && esc.steps > 20 && esc.dir === -1, '电脑站在地火里：知道往近的那边走出去', esc ? `方向 ${esc.dir} · ${esc.steps} 步` : '');
+    const plan = RZ.aiThink(g, ai);
+    check(plan.moveDir === esc.dir && plan.moveSteps === esc.steps, '逃离危险优先于其它走位');
+    for (let i = 0; i < esc.steps; i++) { g.active = ai; g.phase = 'aim'; g.moveActive(esc.dir); }
+    check(!g.dangerAt(ai.x, ai.y), '走完就出了危险地带');
+  }
+
+  // ---------- Boss ----------
+  head('Boss：预告打击与阶段');
+  const bossArena = (kit, extra) => {
+    const g = arena(null, Object.assign({ kit, boss: true, scale: 1.5 }, extra || {}), 900);
+    g.telegraphs.length = 0; g.units[1].kitTurn = 0; g.units[1].kitPhase = 0;
+    return g;
+  };
+  {
+    const g = bossArena('crusher');
+    const me = g.units[0], boss = g.units[1], hp0 = me.hp;
+    g.bossTurnStart(boss);
+    check(g.telegraphs.length === 2 && Math.abs(g.telegraphs[0].x - me.x) < 20, '碾压者圈两块地，第一块压在玩家脚下');
+    check(me.hp === hp0, '圈地当回合不伤人');
+    check(g.dangerAt(me.x, me.y), '警戒线算危险地带（电脑会躲）');
+    g.bossTurnStart(boss);
+    check(g.telegraphs.length === 0 && g.pendingBlasts.length === 2, '下一回合：圈的地开始落下');
+    settle(g, 120);
+    check(me.hp < hp0 - 60, '没挪开就挨炸', `-${Math.round(hp0 - me.hp)}`);
+
+    const d = bossArena('crusher');
+    const you = d.units[0], b2 = d.units[1], h1 = you.hp;
+    d.bossTurnStart(b2);
+    you.x -= 220; you.y = d.terrain.groundBelow(you.x, 0);
+    const far = d.telegraphs.every((t) => Math.abs(t.x - you.x) > t.r + 60);
+    d.bossTurnStart(b2); settle(d, 120);
+    check(!far || you.hp === h1, '挪开了就毫发无伤');
+  }
+  {
+    const g = bossArena('crusher');
+    const me = g.units[0], boss = g.units[1], atk0 = boss.atk, props0 = g.props.length, hp0 = me.hp;
+    boss.hp = boss.maxHp * 0.45;
+    g.bossTurnStart(boss);
+    check(boss.kitPhase === 1 && boss.atk > atk0, '血量过半：进入第二阶段，攻击上升');
+    check(me.hp === hp0 - 40 && me.airborne, '地震把玩家震起来并扣血');
+    check(g.props.length === props0 + 3, '天上掉下三个油桶');
+    check(g.telegraphs.length === 3, '换阶段当回合就出新招：圈三块');
+    g.kill(boss);
+    check(g.telegraphs.length === 0, 'Boss 一死，它圈的地作废');
+  }
+  {
+    const g = bossArena('queen');
+    const me = g.units[0], boss = g.units[1];
+    g.wind = 0;
+    g.bossTurnStart(boss);
+    const toward = me.x < boss.x ? -1 : 1;
+    check(Math.sign(g.wind) === toward && Math.abs(g.wind) >= g.map.windMax * 0.49, '风暴女王把风拧向玩家', `风 ${g.wind.toFixed(1)}`);
+    check(g.telegraphs.length === 1 && g.telegraphs[0].strike === 'twister', '第一阶段圈地放龙卷');
+    g.bossTurnStart(boss);
+    check(g.hazards.some((h) => h.type === 'twister'), '龙卷落在圈的地上');
+    check(me.airborne, '没挪开的玩家被当场卷起');
+    boss.hp = boss.maxHp * 0.4; settle(g, 200);
+    g.bossTurnStart(boss);
+    check(g.telegraphs.length === 3 && g.telegraphs.every((t) => t.strike === 'bolt'), '第二阶段改成一排三道落雷');
+    const xs = g.telegraphs.map((t) => t.x).sort((a, b) => a - b);
+    check(xs[1] - xs[0] > 50 && xs[2] - xs[1] > 50, '三道雷一字排开');
+  }
+  {
+    const g = new RZ.Game({
+      mapId: 'dry', arcade: true, barrels: 0, humanTeam: 0, roster: [
+        { vehicle: V('liehuo'), team: 0, ai: false, name: '我' },
+        { vehicle: V('honglong'), team: 1, ai: true, name: '终焉战车', kit: 'doom', boss: true },
+        { vehicle: V('tuoer'), team: 1, ai: true, name: '护卫' }]
+    });
+    const boss = g.units[1], guard = g.units[2], hp0 = boss.hp;
+    g.damage(boss, 100, g.units[0]);
+    check(boss.hp === hp0 - 75, '护卫在场：终焉战车只吃四分之三的伤害');
+    g.kill(guard);
+    g.damage(boss, 100, g.units[0]);
+    check(boss.hp === hp0 - 175, '护卫倒下后吃满');
+    boss.hp = boss.maxHp * 0.3;
+    check(g.bossPhase(boss) === 2, '血量 30% 时是第三阶段');
+  }
+  {
+    const s = Run.newRun('liehuo');
+    check(s.layers[4][0].enemies[0].kit === 'crusher', '远征的 Boss 节点带着招式表');
+    s.step = 4; Run.enter(s, 0);
+    check(Run.battleOpts(s).roster[1].kit === 'crusher', '招式表传进了战斗');
+    check(Run.ACTS.every((a) => RZ.BOSS_KITS[a.boss.kit]), '三个 Boss 都有招式表');
+  }
+
+  // ---------- 存档 ----------
+  head('进度码与存档安全');
+  {
+    Run.clear();
+    Run.saveMeta({ medals: 17, unlocked: ['liehuo', 'tiejingang', 'beibeilong', 'honglong'], wins: 2, asc: 1, runs: 9, best: 12 });
+    const s = Run.newRun('honglong'); s.act = 1; s.step = 2; s.relics = ['crit']; Run.save(s);
+    const code = Run.exportCode();
+    check(/^RZ1\.[0-9a-f]{8}\.[A-Za-z0-9_-]+$/.test(code), '进度码是一串可以放进网址的文本', `${code.length} 字符`);
+    const p = Run.parseCode('https://example.com/#save=' + code + '\n ');
+    check(p.ok && p.meta.medals === 17 && p.run && p.run.act === 1 && p.run.relics[0] === 'crit', '带进度的链接能读出同样的内容');
+    check(p.run.layers[4][0].enemies[0].name === s.layers[4][0].enemies[0].name, '中文原样往返');
+    check(!Run.parseCode(code.slice(0, -7)).ok, '少了一截会被发现');
+    check(!Run.parseCode(code.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A'))).ok, '改了一个字符会被发现');
+    check(!Run.parseCode('随便一段话').ok && Run.parseCode('随便一段话').error.length > 0, '不是进度码时给出原因');
+
+    Run.clear(); Run.saveMeta({});
+    check(Run.loadMeta().medals === 0 && Run.load() === null, '（清空这台设备）');
+    const r = Run.importCode(code);
+    check(r.ok && Run.loadMeta().medals === 17 && Run.loadMeta().unlocked.length === 4 && Run.load().vehicleId === 'honglong', '导入后进度原样回来');
+    check(Run.loadMeta().sinceBackup === 0 && Run.loadMeta().lastBackup > 0, '导入等于刚备份过');
+  }
+  {
+    Run.saveMeta({ medals: 5 }); Run.saveMeta({ medals: 8 });
+    Run._storeSet('rz-meta', '{写到一半断电了');
+    check(Run.loadMeta().medals === 5, '主档写坏了：退回上一份，只丢最近一次改动');
+    const junk = Run.parseCode(Run.exportCode());
+    check(junk.ok, '（基线）');
+    Run.saveMeta({ medals: -3, unlocked: ['liehuo', '不存在的车'], asc: 99 });
+    const n = Run.loadMeta();
+    check(n.medals === 0 && n.unlocked.indexOf('不存在的车') < 0 && n.unlocked.length === 3 && n.asc === Run.MAX_ASC, '残缺 / 离谱的存档会被补齐成合法的');
+    check(n.v === 1, '存档带格式版本号');
+  }
+  {
+    Run.saveMeta({});
+    check(!Run.needsBackup(Run.loadMeta()), '新玩家不催备份');
+    for (let i = 0; i < 3; i++) Run.finish(Run.newRun('liehuo'), false);
+    check(Run.loadMeta().sinceBackup === 3 && Run.needsBackup(Run.loadMeta()), '三次远征没备份就提醒');
+    Run.markBackup();
+    check(!Run.needsBackup(Run.loadMeta()), '导出之后不再提醒');
+  }
+
   // ---------- 远征流程 ----------
   head('远征：状态机');
   {

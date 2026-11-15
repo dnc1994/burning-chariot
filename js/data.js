@@ -16,7 +16,7 @@
   'use strict';
 
   // 版本号：每次大更新都要改这里，并在 CHANGELOG.md 里记一条、打一个同名 git tag
-  RZ.VERSION = '1.1.0';
+  RZ.VERSION = '1.2.0';
 
   RZ.MAX_FUEL = 200;          // 燃料上限，全场统一
   RZ.START_FUEL = 22;         // 开局油量：勉强够打一发一号或二号武器 + 挪两步
@@ -54,32 +54,33 @@
 
   // ---- 武器的样子 ----------------------------------------------------
   // look → { boom: 落地炸成什么样（render.js 的 BOOMS）, snd: 出膛和落地是什么声音（audio.js） }
+  // field（可选）：落点留下一块区域 [类型, 留几轮, 强度]，只在爽快规则下生效，规则见 field.js
   // 弹体本身怎么画在 render.js 的 SHOTS[look] 里。加一把新武器：挑一个现成的 look，
   // 或者在这里加一行、再去 render.js 加一个 SHOTS 函数。
   RZ.LOOKS = {
     shell:      { boom: 'fire',       snd: 'gun' },
     cracker:    { boom: 'crackers',   snd: 'gun' },
-    meteor:     { boom: 'inferno',    snd: 'flame' },
+    meteor:     { boom: 'inferno',    snd: 'flame', field: ['fire', 3, 42] },
     dragonfire: { boom: 'flame',      snd: 'flame' },
     dragonhead: { boom: 'flame',      snd: 'flame' },
-    breath:     { boom: 'inferno',    snd: 'flame' },
+    breath:     { boom: 'inferno',    snd: 'flame', field: ['fire', 3, 48] },
     fist:       { boom: 'steel',      snd: 'steel' },
     hammer:     { boom: 'steel',      snd: 'steel' },
     thunderhammer: { boom: 'volt',    snd: 'steel' },
     egg:        { boom: 'yolk',       snd: 'egg' },
     goldegg:    { boom: 'yolk',       snd: 'egg' },
-    venom:      { boom: 'venom',      snd: 'goo' },
-    spit:       { boom: 'venom',      snd: 'goo' },
-    web:        { boom: 'web',        snd: 'goo' },
+    venom:      { boom: 'venom',      snd: 'goo', field: ['pool', 3, 24] },
+    spit:       { boom: 'venom',      snd: 'goo', field: ['pool', 2, 18] },
+    web:        { boom: 'web',        snd: 'goo', field: ['web', 3, 0] },
     cyclone:    { boom: 'whirl',      snd: 'wind' },
     drill:      { boom: 'dust',       snd: 'wind' },
-    tornado:    { boom: 'tornado',    snd: 'wind' },
+    tornado:    { boom: 'tornado',    snd: 'wind', field: ['twister', 2, 0] },
     spark:      { boom: 'volt',       snd: 'volt' },
     storm:      { boom: 'volt',       snd: 'volt' },
     dart:       { boom: 'volt',       snd: 'volt' },
-    oilcan:     { boom: 'groundfire', snd: 'flame' },
-    ember:      { boom: 'groundfire', snd: 'flame' },
-    napalm:     { boom: 'groundfire', snd: 'flame' },
+    oilcan:     { boom: 'groundfire', snd: 'flame', field: ['fire', 2, 34] },
+    ember:      { boom: 'groundfire', snd: 'flame', field: ['fire', 2, 22] },
+    napalm:     { boom: 'groundfire', snd: 'flame', field: ['fire', 3, 40] },
     beam:       { boom: 'energy',     snd: 'zap' },
     lance:      { boom: 'energy',     snd: 'zap' },
     rail:       { boom: 'energy',     snd: 'zap' },

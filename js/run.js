@@ -129,19 +129,19 @@
   Run.ACTS = [
     {
       name: '锈蚀前线', maps: ['dry', 'canyon'],
-      boss: { vid: 'aodin', name: '碾压者', hp: 1080, atk: 82, scale: 1.5, map: 'canyon',
+      boss: { vid: 'aodin', name: '碾压者', kit: 'crusher', hp: 1080, atk: 82, scale: 1.5, map: 'canyon',
               mods: { w1: ['cluster'], w2: ['blast'] }, perks: { anchor: 1, armor: 0.1 }, escorts: 0 }
     },
     {
       name: '风暴航道', maps: ['sky', 'sea'],
-      boss: { vid: 'xuanfeng', name: '风暴女王', hp: 1450, atk: 90, scale: 1.45, map: 'sky',
-              mods: { w1: ['apex', 'thunder'], w2: ['split', 'knock'] }, perks: { anchor: 1 }, escorts: 1 }
+      boss: { vid: 'xuanfeng', name: '风暴女王', kit: 'queen', hp: 1150, atk: 84, scale: 1.45, map: 'sky',
+              mods: { w1: ['apex', 'thunder'], w2: ['split'] }, perks: { anchor: 1 }, escorts: 1 }
     },
     {
       name: '星环终点', maps: ['star', 'canyon', 'sea'],
-      boss: { vid: 'honglong', name: '终焉战车', hp: 2000, atk: 104, scale: 1.7, map: 'star',
-              mods: { w1: ['split', 'burn', 'cluster'], w2: ['apex', 'heavy'], ss: ['blast'] },
-              perks: { anchor: 1, armor: 0.2, repair: 0.02, aftershock: 0.4 }, escorts: 2 }
+      boss: { vid: 'honglong', name: '终焉战车', kit: 'doom', hp: 1350, atk: 76, scale: 1.7, map: 'star',
+              mods: { w1: ['burn', 'cluster'], w2: ['apex'] },
+              perks: { anchor: 1, armor: 0.1 }, escorts: 2 }
     }
   ];
   Run.LAYERS_PER_ACT = 5;
@@ -165,19 +165,37 @@
     try { if (window.localStorage) window.localStorage.removeItem(key); } catch (e) { /* 同上 */ }
   }
 
-  Run.loadMeta = function () {
-    var m = null;
-    try { m = JSON.parse(storeGet('rz-meta') || 'null'); } catch (e) { m = null; }
+  // 局外存档写两份：每次写入前把上一份挪到 rz-meta-bak。主档读不出来（写到一半断电、
+  // 被别的东西改坏）就退回备份那份，最多丢最近一次远征的结算。
+  function readMeta(key) {
+    try {
+      var m = JSON.parse(storeGet(key) || 'null');
+      return m && typeof m === 'object' ? m : null;
+    } catch (e) { return null; }
+  }
+  /** 把一份可能残缺、可能来自旧版本的局外存档补齐成当前版本的样子 */
+  function normalizeMeta(m) {
     if (!m || typeof m !== 'object') m = {};
-    m.medals = m.medals || 0;
-    m.unlocked = m.unlocked && m.unlocked.length ? m.unlocked : Run.STARTERS.slice();
-    m.asc = m.asc || 0;            // 已解锁的最高进阶
-    m.wins = m.wins || 0;
-    m.runs = m.runs || 0;
-    m.best = m.best || 0;          // 打赢过的最多场数
+    var ok = function (id) { return !!RZ.vehicleById(id) && RZ.vehicleById(id).id === id; };
+    m.v = 1;                       // 存档格式版本；以后改格式就在这里按旧版本号做迁移
+    m.medals = Math.max(0, m.medals | 0);
+    m.unlocked = (m.unlocked && m.unlocked.length ? m.unlocked : Run.STARTERS).filter(ok);
+    Run.STARTERS.forEach(function (id) { if (m.unlocked.indexOf(id) < 0) m.unlocked.push(id); });
+    m.asc = Math.max(0, Math.min(Run.MAX_ASC, m.asc | 0));      // 已解锁的最高进阶
+    m.wins = Math.max(0, m.wins | 0);
+    m.runs = Math.max(0, m.runs | 0);
+    m.best = Math.max(0, m.best | 0);          // 打赢过的最多场数
+    m.lastBackup = m.lastBackup || 0;          // 上次导出进度的时间
+    m.sinceBackup = Math.max(0, m.sinceBackup | 0);   // 上次导出之后又打完了几次远征
     return m;
+  }
+  Run._storeSet = storeSet;      // 测试用：直接往存储里塞东西，模拟存档被写坏
+  Run.loadMeta = function () { return normalizeMeta(readMeta('rz-meta') || readMeta('rz-meta-bak')); };
+  Run.saveMeta = function (m) {
+    var prev = storeGet('rz-meta');
+    if (prev && readMeta('rz-meta')) storeSet('rz-meta-bak', prev);
+    storeSet('rz-meta', JSON.stringify(normalizeMeta(m)));
   };
-  Run.saveMeta = function (m) { storeSet('rz-meta', JSON.stringify(m)); };
   Run.unlock = function (meta, vid) {
     if (meta.unlocked.indexOf(vid) >= 0 || meta.medals < Run.UNLOCK_COST) return false;
     meta.medals -= Run.UNLOCK_COST;
@@ -187,6 +205,11 @@
   };
 
   Run.save = function (state) { storeSet('rz-run', JSON.stringify(state)); };
+  /** 一份远征存档看起来是不是完整的（导入别处来的进度时用） */
+  function validRun(r) {
+    return !!r && r.v === 1 && !r.over && !!RZ.vehicleById(r.vehicleId) && RZ.vehicleById(r.vehicleId).id === r.vehicleId &&
+      Array.isArray(r.layers) && r.layers.length > 0 && Array.isArray(r.relics) && !!r.mods && typeof r.hp === 'number';
+  }
   Run.load = function () {
     try {
       var s = JSON.parse(storeGet('rz-run') || 'null');
@@ -194,6 +217,104 @@
     } catch (e) { return null; }
   };
   Run.clear = function () { storeDel('rz-run'); };
+
+  // ================= 进度码：不做账号，也能把进度带走 =================
+  // 进度只存在这台设备的浏览器里：清数据、换设备、Safari 七天不来都会丢。
+  // 所以给玩家一串「进度码」——勋章、解锁、进行中的远征全在里面，复制走、存成文件、
+  // 或者拼在网址 # 后面发到另一台设备上，都能原样读回来。
+  // 格式：RZ1.<8 位校验>.<base64url(JSON 的 UTF-8)>。校验只为了发现「粘贴时少了一截」，
+  // 不防篡改——单机游戏改存档只影响自己。
+  var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  function utf8(str) {
+    var out = [];
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      if (c >= 0xd800 && c < 0xdc00 && i + 1 < str.length) c = 0x10000 + ((c - 0xd800) << 10) + (str.charCodeAt(++i) - 0xdc00);
+      if (c < 0x80) out.push(c);
+      else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+      else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+      else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    }
+    return out;
+  }
+  function fromUtf8(b) {
+    var s = '';
+    for (var i = 0; i < b.length;) {
+      var c = b[i++];
+      if (c >= 0xf0) c = ((c & 7) << 18) | ((b[i++] & 63) << 12) | ((b[i++] & 63) << 6) | (b[i++] & 63);
+      else if (c >= 0xe0) c = ((c & 15) << 12) | ((b[i++] & 63) << 6) | (b[i++] & 63);
+      else if (c >= 0xc0) c = ((c & 31) << 6) | (b[i++] & 63);
+      if (c >= 0x10000) { c -= 0x10000; s += String.fromCharCode(0xd800 + (c >> 10), 0xdc00 + (c & 1023)); }
+      else s += String.fromCharCode(c);
+    }
+    return s;
+  }
+  function b64enc(bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i += 3) {
+      var n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0);
+      s += B64[n >> 18] + B64[(n >> 12) & 63] + (i + 1 < bytes.length ? B64[(n >> 6) & 63] : '') + (i + 2 < bytes.length ? B64[n & 63] : '');
+    }
+    return s;
+  }
+  function b64dec(s) {
+    var out = [], acc = 0, bits = 0;
+    for (var i = 0; i < s.length; i++) {
+      var v = B64.indexOf(s[i]);
+      if (v < 0) return null;
+      acc = (acc << 6) | v; bits += 6;
+      if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); }
+    }
+    return out;
+  }
+  function checksum(s) {                       // FNV-1a，32 位
+    var h = 0x811c9dc5;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0; }
+    return ('0000000' + h.toString(16)).slice(-8);
+  }
+
+  /** 把当前全部进度打成一串进度码 */
+  Run.exportCode = function () {
+    var body = b64enc(utf8(JSON.stringify({ v: 1, game: RZ.VERSION, meta: Run.loadMeta(), run: Run.load() })));
+    return 'RZ1.' + checksum(body) + '.' + body;
+  };
+
+  /**
+   * 读一串进度码（也接受带 #save= 的整条链接）。不写入任何东西，只告诉你里面是什么：
+   * { ok: true, meta, run } 或 { ok: false, error: '给玩家看的原因' }。
+   */
+  Run.parseCode = function (text) {
+    var code = String(text || '').replace(/\s+/g, '');
+    var at = code.indexOf('RZ1.');
+    if (at < 0) return { ok: false, error: '这不是一串进度码——它应该以 RZ1. 开头。' };
+    var parts = code.slice(at).split('.');
+    if (parts.length !== 3 || checksum(parts[2]) !== parts[1]) return { ok: false, error: '进度码不完整，可能复制时少了一截。请重新复制整串。' };
+    var bytes = b64dec(parts[2]), data = null;
+    try { data = bytes && JSON.parse(fromUtf8(bytes)); } catch (e) { data = null; }
+    if (!data || typeof data !== 'object' || !data.meta) return { ok: false, error: '进度码读不出来，可能已经损坏。' };
+    return { ok: true, meta: normalizeMeta(data.meta), run: validRun(data.run) ? data.run : null };
+  };
+
+  /** 用进度码覆盖这台设备上的进度 */
+  Run.importCode = function (text) {
+    var r = Run.parseCode(text);
+    if (!r.ok) return r;
+    r.meta.lastBackup = Date.now(); r.meta.sinceBackup = 0;     // 刚从备份恢复，等于刚备份过
+    Run.saveMeta(r.meta);
+    if (r.run) Run.save(r.run); else Run.clear();
+    return r;
+  };
+
+  /** 记一笔：玩家刚刚把进度带走了 */
+  Run.markBackup = function () {
+    var m = Run.loadMeta();
+    m.lastBackup = Date.now(); m.sinceBackup = 0;
+    Run.saveMeta(m);
+  };
+  /** 该提醒备份了吗：攒了三次远征没导出，或者已经解锁过东西却从没导出过 */
+  Run.needsBackup = function (meta) {
+    return meta.sinceBackup >= 3 || (!meta.lastBackup && (meta.unlocked.length > Run.STARTERS.length || meta.wins > 0));
+  };
 
   // ================= 开局 =================
   Run.newRun = function (vehicleId, opts) {
@@ -280,14 +401,14 @@
     var act = Run.ACTS[state.act], b = act.boss, asc = state.asc;
     var node = { type: 'boss', mapId: b.map, enemies: [], gold: 120 + state.act * 40 };
     node.enemies.push({
-      vid: b.vid, name: b.name, boss: true, scale: b.scale,
+      vid: b.vid, name: b.name, boss: true, kit: b.kit, scale: b.scale,
       hp: Math.round(b.hp * (1 + asc * 0.08)), atk: Math.round(b.atk * (1 + asc * 0.05)),
       mods: { w1: (b.mods.w1 || []).slice(), w2: (b.mods.w2 || []).slice(), ss: (b.mods.ss || []).slice() },
       perks: copy(b.perks)
     });
     for (var i = 0; i < b.escorts; i++) {
       var e = enemyDef(state, Run.LAYERS_PER_ACT - 1, 'fight');
-      e.hpMul *= 0.35; e.atkMul *= 0.75; e.name = '护卫·' + e.name;
+      e.hpMul *= 0.35; e.atkMul *= 0.62; e.name = '护卫·' + e.name;
       node.enemies.push(e);
     }
     return node;
@@ -340,7 +461,7 @@
   Run.battleOpts = function (state, playerAI) {
     var node = state.node, roster = [], i;
     var pv = Run.playerVehicle(state), pk = Run.perks(state);
-    pk.rescue = 1;                 // 每场一次牵引回收，见 game.js 的 rescue()
+    pk.rescue = node.type === 'boss' ? 2 : 1;   // 牵引回收：每场一次，Boss 战两次（见 game.js 的 rescue()）
     roster.push({
       vehicle: pv, team: 0, ai: !!playerAI, aiLevel: typeof playerAI === 'string' ? playerAI : null, name: pv.name,
       items: state.items.slice(), perks: pk, hp: Math.min(pv.hp, state.hp)
@@ -349,7 +470,8 @@
       var e = node.enemies[i], ev = enemyVehicle(e);
       roster.push({
         vehicle: ev, team: 1, ai: true, name: e.name + (i && !e.boss && node.enemies[0].name === e.name ? '·2' : ''),
-        items: e.boss ? ['heal1'] : [], perks: e.perks || {}, scale: e.scale || 1, boss: !!e.boss
+        items: [], perks: e.perks || {}, scale: e.scale || 1, boss: !!e.boss, kit: e.kit || null,
+        aiLevel: node.type === 'boss' && !e.boss ? 'normal' : null      // Boss 的护卫打得没那么准，不然三门炮一起点名太狠
       });
     }
     return {
@@ -465,6 +587,7 @@
     state.earned = state.battles + state.bosses * 3 + (won ? 10 + state.asc * 2 : 0);
     meta.medals += state.earned;
     meta.runs++;
+    meta.sinceBackup++;
     meta.best = Math.max(meta.best, state.battles);
     if (won) {
       meta.wins++;

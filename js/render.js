@@ -1290,6 +1290,86 @@
       ctx.lineWidth = 3.5; ctx.lineCap = 'round'; ctx.strokeStyle = INK; ctx.stroke();
     }
   };
+  MARKS.skyfall = function (ctx, m, u) {                // Boss 的预告打击落地：一道从天上砸下来的黄线
+    ctx.beginPath(); ctx.moveTo(m.x, m.y - 900); ctx.lineTo(m.x, m.y);
+    inkLine(ctx, YELLOW, Math.max(2, m.r * 0.3 * (1 - u)));
+  };
+
+  // ================= 留在场上的区域 / Boss 的警戒线 =================
+  // 规则在 field.js；这里只管把它们画出来。区域头顶有个小牌子：名字 + 还剩几轮。
+  var HAZARD_NAME = { fire: '地火', pool: '毒池', web: '蛛网', twister: '龙卷' };
+  RZ.drawHazard = function (ctx, h, t) {
+    var p = h.pts, i, top = h.y - 30;
+    ctx.save();
+    ctx.lineJoin = 'round';
+    if (h.type === 'fire') {                            // 一排一直烧着的火苗
+      for (i = 0; i < p.length; i += 2) {
+        var ph = h.seed + i * 1.7, hgt = 15 + (i % 3) * 4, wd = 6.5;
+        var sway = Math.sin(t * 0.02 + ph) * 4, f = 0.78 + 0.22 * Math.sin(t * 0.05 + ph * 3);
+        poly(ctx, [p[i] - wd, p[i + 1], p[i] - wd * 0.4 + sway * 0.4, p[i + 1] - hgt * 0.5 * f, p[i] + sway, p[i + 1] - hgt * f,
+          p[i] + wd * 0.5 + sway * 0.3, p[i + 1] - hgt * 0.45 * f, p[i] + wd, p[i + 1]]);
+        ink(ctx, RED, 2);
+        poly(ctx, [p[i] - wd * 0.5, p[i + 1], p[i] + sway * 0.5, p[i + 1] - hgt * 0.55 * f, p[i] + wd * 0.5, p[i + 1]]);
+        ctx.fillStyle = YELLOW; ctx.fill();
+      }
+      top = h.y - 44;
+    } else if (h.type === 'pool') {                     // 贴着地面的一道绿，上面冒泡
+      ctx.beginPath();
+      for (i = 0; i < p.length; i += 2) { if (i === 0) ctx.moveTo(p[i], p[i + 1] + 1); else ctx.lineTo(p[i], p[i + 1] + 1); }
+      inkLine(ctx, '#8fd13f', 6);
+      for (i = 0; i < 4; i++) {
+        var cyc = ((t * 0.0006 + i * 0.27 + h.seed) % 1), k = (i * 2) % Math.max(2, p.length);
+        k -= k % 2;
+        disc(ctx, p[k] + Math.sin(h.seed + i * 2) * 8, p[k + 1] - 4 - cyc * 26, 2 + (1 - cyc) * 3);
+        ctx.lineWidth = 4; ctx.strokeStyle = INK; ctx.stroke();
+        ctx.lineWidth = 1.8; ctx.strokeStyle = '#c8ff7a'; ctx.stroke();
+      }
+      top = h.y - 40;
+    } else if (h.type === 'web') {
+      MARKS.web(ctx, { x: h.x, y: h.y - h.r * 0.25, r: h.r, seed: h.seed }, 0.5);
+      top = h.y - h.r * 1.25 - 8;
+    } else if (h.type === 'twister') {
+      MARKS.twister(ctx, { x: h.x, y: h.y + 24, r: h.r * 0.62, seed: h.seed }, 0.45, t);
+      top = h.y - h.r * 1.5;
+    }
+    ctx.font = '15px ' + RZ.FONT; ctx.textAlign = 'center';
+    inkText(ctx, HAZARD_NAME[h.type] + ' ' + h.rounds, h.x, top, h.type === 'pool' ? '#c8ff7a' : h.type === 'fire' ? YELLOW : PAPER, 4);
+    ctx.restore();
+  };
+
+  /**
+   * Boss 圈出来的地：沿地面拉一道黄黑相间的警戒线，上面悬着一块警告牌，
+   * 一根虚线指向天上——东西是从上面落下来的。
+   */
+  RZ.drawTelegraph = function (ctx, tg, terrain, t) {
+    var n = 8, i, x, y, cy = 0;
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
+    ctx.beginPath();
+    for (i = 0; i <= n; i++) {
+      x = Math.max(2, Math.min(RZ.WORLD_W - 2, tg.x - tg.r + i / n * tg.r * 2));
+      y = terrain.groundBelow(x, 0);
+      if (y >= RZ.WORLD_H - 4) y = RZ.WORLD_H * 0.6;
+      if (i === n / 2) cy = y;
+      if (i === 0) ctx.moveTo(x, y - 3); else ctx.lineTo(x, y - 3);
+    }
+    ctx.lineWidth = 13; ctx.strokeStyle = INK; ctx.stroke();
+    ctx.lineWidth = 8; ctx.strokeStyle = YELLOW; ctx.stroke();
+    ctx.setLineDash([9, 9]); ctx.lineDashOffset = -(t * 0.03) % 18;
+    ctx.strokeStyle = INK; ctx.stroke();
+    // 指向天上的虚线
+    ctx.setLineDash([6, 10]); ctx.lineDashOffset = (t * 0.06) % 16;
+    ctx.beginPath(); ctx.moveTo(tg.x, cy - 62); ctx.lineTo(tg.x, cy - 420);
+    ctx.lineWidth = 5; ctx.strokeStyle = INK; ctx.stroke();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = YELLOW; ctx.stroke();
+    ctx.setLineDash([]);
+    // 警告牌
+    var bob = Math.sin(t * 0.008 + tg.seed) * 3, sy = cy - 34 + bob;
+    poly(ctx, [tg.x, sy - 26, tg.x - 20, sy + 6, tg.x + 20, sy + 6]); ink(ctx, YELLOW, 3);
+    ctx.fillStyle = INK; ctx.fillRect(tg.x - 2, sy - 14, 4, 11); ctx.fillRect(tg.x - 2, sy - 1, 4, 4);
+    ctx.restore();
+  };
+
   Particles.prototype.drawMarks = function (ctx, t) {
     var ms = this.marks;
     ctx.save();

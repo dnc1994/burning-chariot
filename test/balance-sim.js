@@ -29,7 +29,7 @@ for (let r = 0; r < N; r++) {
       // 玩家那辆用 playerDiff 的抖动：临时包一层
       let f = 0; const hp0 = s.hp;
       while (g.result === null && f < 60 * 60 * 10) { g.update(16); f++; }
-      const t = s.node.type;
+      const t = s.node.type === 'boss' ? 'boss' + (s.act + 1) : s.node.type;   // 三个 Boss 分开统计
       Run.afterBattle(s, g);
       const b = stats.byType[t] = stats.byType[t] || { n: 0, win: 0, loss: 0, turns: 0, sec: 0 };
       b.n++; b.turns += g.turnNo; b.sec += f / 60;

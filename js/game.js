@@ -37,6 +37,8 @@
     this.scale = cfg.scale || 1;       // Boss 画得更大、也更好打中
     this.boss = !!cfg.boss;
     this.aiLevel = cfg.aiLevel || null;
+    this.kit = cfg.kit || null;         // Boss 的招式表，见 field.js 的 RZ.BOSS_KITS
+    this.kitPhase = 0; this.kitTurn = 0;
     this.vx = 0;                       // 被爆炸击飞时的水平速度（仅爽快规则）
     this.streak = 0;                   // 连续命中的回合数
     this.firstShot = true;
@@ -104,6 +106,8 @@
     this.arc = opts.arcade ? ARCADE : null;
     this.hardcore = !!opts.hardcore;     // 爽快规则下的硬核开关：不给弹道预览和出手队列
     this.props = [];                     // 油桶
+    this.hazards = [];                   // 留在场上的区域：地火、毒池、蛛网、龙卷（field.js）
+    this.telegraphs = [];                // Boss 圈出来、下回合才落地的打击（field.js）
     this.pendingBlasts = [];             // 延迟引爆：油桶连锁、余震
     this.hitstop = 0;                    // 顿帧
     this.slowmo = 0;                     // 击破时的慢动作
@@ -156,6 +160,10 @@
 
     if (this.arc) this.placeProps();
     this.beginTurn(true);
+    for (i = 0; i < this.units.length; i++) {            // Boss 战开场先说清楚它的规矩
+      var kit = this.units[i].kit && RZ.BOSS_KITS[this.units[i].kit];
+      if (kit && kit.intro) this.say(kit.intro, '#ffd166');
+    }
   }
 
   Game.prototype.aliveOf = function (team) {
@@ -189,6 +197,7 @@
     this.round++;
     this.roundQueue = ordered;
     this.roundQueueFirst = ordered[0];
+    if (this.arc) this.fieldRoundStart();
   };
 
   /**
@@ -313,6 +322,11 @@
     this.aiTimer = this.arc ? this.arc.aiWait : 24;
 
     if (!first) this.stepWind();      // 开局那阵风用构造时定的，不再多走一步
+    if (this.arc) {
+      this.fieldTurnStart(u);                           // 站在地火 / 毒池 / 龙卷里
+      if (u.kit && u.alive) this.bossTurnStart(u);      // Boss：上回合圈的地落下来，再圈新的
+      if (u.alive && !u.ai && this.dangerAt(u.x, u.y)) this.say('你脚下有危险——挪开！', '#ff5a5a');
+    }
 
     this.applyDots(u);
     if (u.alive && !u.ai && !u.canAfford(u.vehicle.w1)) {
@@ -578,6 +592,7 @@
     var dig = radius * (w.digMul || 1);
     this.terrain.carve(x, y, dig);
     this.fx.boom(x, y, radius, w, this.map.ground);        // 每种武器落地的样子都不一样，见 render.js 的 BOOMS
+    if (arc) this.spawnField(x, y, radius, w, attacker);   // 有些武器会在落点留下一块区域
     this.fx.debris(x, y, Math.min(26, radius * 0.35), this.map.ground.body);
     this.cam.shake = Math.max(this.cam.shake, Math.min(16, radius * 0.16) * (arc ? 1.5 : 1));
     RZ.SFX.explode({ big: radius > 64, kind: w.isBarrel ? 'gun' : RZ.lookOf(w).snd });
@@ -604,7 +619,7 @@
         // 横向击飞：离爆心越近、挨得越重飞得越远。悬崖边、浮岛上，这就是另一种杀法
         var dirX = t.x >= x ? 1 : -1;
         if (Math.abs(t.x - x) < 3 && attacker) dirX = t.x >= attacker.x ? 1 : -1;
-        var push = Math.min(9, 1.2 + dmg * 0.028) * (w.kb || 1) * (1 + (apk.kb || 0)) / t.scale;
+        var push = Math.min(9, 1.2 + dmg * 0.028) * (w.kb || 1) * (1 + (apk.kb || 0)) / t.scale * this.pushMul(t);
         t.vx += dirX * push;
         t.vy = Math.min(t.vy, -Math.min(7, 2 + push * 0.7));
         t.lastHitBy = attacker;
@@ -739,6 +754,7 @@
         this.props.splice(k, 1);
         this.explode(b.prop.x, b.prop.y - 10, b.w, b.attacker, null, b.mul);
       } else {
+        if (b.skyfall) this.fx.mark({ type: 'skyfall', x: b.x, y: b.y, r: b.w.radius, life: 12 });
         this.explode(b.x, b.y, b.w, b.attacker, null, b.mul);
       }
     }
@@ -825,6 +841,10 @@
     if (!target.alive || amount <= 0) return;
     var arc = this.arc, tpk = target.perks;
     if (arc && tpk.armor) amount = Math.max(1, Math.round(amount * (1 - tpk.armor)));
+    if (arc && target.kit) {                            // 护卫在场：Boss 只吃一部分伤害
+      var gm = this.guardMul(target);
+      if (gm < 1) { amount = Math.max(1, Math.round(amount * gm)); this.fx.text(target.x, target.y - 118, '护卫替它挡了一部分', '#8fe3d6'); }
+    }
     target.hp -= amount;
     target.hitFlash = 14;
     this.fx.text(target.x, target.y - 76, '-' + amount, color || (direct ? '#fff1a8' : '#ffffff'), direct);
@@ -859,6 +879,7 @@
     }
     u.hp = 0; u.alive = false;
     if (this.arc) {
+      if (u.kit) this.clearTelegraphs(u);
       this.slowmo = 44;
       this.hitstop = Math.max(this.hitstop, 8);
       var by = attacker || u.lastHitBy;
@@ -907,6 +928,7 @@
     if (u.stunned > 0) { if ((this.t & 31) === 0) this.say('被麻痹了，动不了'); return; }
     u.face = dir;
     var cost = u.vehicle.moveCost;
+    if (this.arc) cost *= this.moveMul(u);            // 陷在蛛网里
     // 还打得出一号武器就给它留着，已经打不出了就随便走——总不能把人钉在原地
     var floor = u.fuel >= u.vehicle.w1.fuel ? u.vehicle.w1.fuel : 0;
     var stepsLeft = 1.7;
@@ -1024,7 +1046,7 @@
 
     this.updatePhysics();
     this.updateSupplies();
-    if (this.arc) this.updateProps();
+    if (this.arc) { this.updateProps(); this.updateField(); }
 
     for (i = this.effects.length - 1; i >= 0; i--) {
       if (--this.effects[i].life <= 0) this.effects.splice(i, 1);
@@ -1302,6 +1324,8 @@
     var i;
     for (i = 0; i < this.supplies.length; i++) RZ.drawSupply(ctx, this.supplies[i], this.t);
     for (i = 0; i < this.props.length; i++) RZ.drawBarrel(ctx, this.props[i], this.t);
+    for (i = 0; i < this.hazards.length; i++) RZ.drawHazard(ctx, this.hazards[i], this.t);
+    for (i = 0; i < this.telegraphs.length; i++) RZ.drawTelegraph(ctx, this.telegraphs[i], this.terrain, this.t);
 
     var viewer = this.viewerTeam();
     for (i = 0; i < this.units.length; i++) {

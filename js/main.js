@@ -7,6 +7,9 @@
   var lastTurn = -1, lastWeaponSig = '';
   // 远征模式接管结算：打完把这一局交回去，而不是「再来一局」
   var battleHook = null;
+  // 敌方回合加速（F 键 / 右上角「快」），记在本地，下次还在
+  var fast = false;
+  try { fast = window.localStorage.getItem('rz-fast') === '1'; } catch (e) { /* 隐私模式 */ }
 
   var setup = {
     mode: '1v1',
@@ -334,6 +337,7 @@
     if (k === '3') game.setWeapon(2);
     if (k === 'Enter') { game.passTurn(); RZ.SFX.click(); }
     if (k === 'g' || k === 'G') toggleGuide();
+    if (k === 'f' || k === 'F') toggleFast();
     if (k === 'm' || k === 'M') toggleMute();
   }
 
@@ -715,6 +719,13 @@
     RZ.drawStar(g, 372 + Math.cos(ma) * md, ground - 3.7 * 24 - Math.sin(ma) * md, big * 0.55, big * 0.3, 7, -t * 0.002, '#d8361f', 3);
   }
 
+  function toggleFast() {
+    fast = !fast;
+    $('btn-fast').classList.toggle('on', fast);
+    try { window.localStorage.setItem('rz-fast', fast ? '1' : '0'); } catch (e) { /* 存不了就只管这一局 */ }
+    RZ.SFX.click();
+  }
+
   // ================= 结算 =================
   function showResult() {
     var tally = {};
@@ -754,6 +765,10 @@
     if (!paused && game.result === null) {
       game.applyHeld(keys);
       game.update(dt);
+      // 敌方回合加速：轮到电脑时（包括它的炮弹飞行和结算）一帧多推进两步
+      if (fast && game.active && game.active.ai) {
+        for (var k = 0; k < 2 && game.result === null && game.active && game.active.ai; k++) game.update(dt);
+      }
     }
 
     var w = canvas.clientWidth, h = canvas.clientHeight;
@@ -840,6 +855,8 @@
     $('btn-again').onclick = startGame;
     $('btn-lobby').onclick = function () { stopGame(); show('title'); };
     $('btn-pause').onclick = togglePause;
+    $('btn-fast').onclick = toggleFast;
+    $('btn-fast').classList.toggle('on', fast);
     $('btn-guide').onclick = toggleGuide;
     $('btn-mute').onclick = toggleMute;
     $('btn-mute').classList.add('on');

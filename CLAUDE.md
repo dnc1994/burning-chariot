@@ -72,6 +72,31 @@
 - 落地效果里要用到地面颜色的（重炮炸起的土）走 `boom(x, y, r, w, ground)` 的最后一个参数。
 - 改完开 `test/weapon-check.html?f=6`：三十二种弹体和落地效果的总览（`f` 是落地效果推进到第几帧）。
 
+### 留在场上的区域与 Boss（`js/field.js`，只在爽快规则下生效）
+
+- **区域 hazard**：武器落地后留下的一块地，按「轮」计时。类型有地火 / 毒池 / 蛛网 / 龙卷，
+  哪把武器留什么写在 `RZ.LOOKS[look].field = [类型, 留几轮, 强度]`。
+  效果在**受害者自己回合开始时**结算（`fieldTurnStart`），放它的人站进去一样吃。
+  同类落在一起会并成一块；地被炸低了会跟着掉（`placeHazard`），脚下彻底空了就消失。
+- **预告 telegraph**：Boss 圈的地，画成警戒线，到 Boss **下一回合开始**才落地（`resolveTelegraphs`）。
+  落地走的是普通的 `explode()`，所以击飞、油桶连锁、留地火全都照常生效。
+- **Boss 招式表** `RZ.BOSS_KITS`：按血量分阶段，每阶段写「隔几回合圈一次、圈几块、落什么」，
+  外加进入阶段时的一次性事件（地震、掉油桶、加攻击）。加新 Boss = 加一张表 + 在 `run.js` 的
+  `Run.ACTS[].boss.kit` 里引用它。
+- **电脑必须会躲**：任何会伤人的新区域都要让 `dangerAt()` 认得，`escapePlan()` 才会带着电脑走出去。
+  平衡模拟里的代打也靠它——不然 Boss 的胜率会低得离谱，数值就没法看了。
+- 画法在 `render.js` 的 `RZ.drawHazard` / `RZ.drawTelegraph`。
+
+### 存档与进度码（`js/run.js`）
+
+- 局外存档 `rz-meta` 每次写入前把上一份挪到 `rz-meta-bak`；主档读不出来就退回备份。
+  读出来一律过 `normalizeMeta()`——补齐缺的字段、扔掉不存在的战车、夹住离谱的数。
+  **改存档格式时在 `normalizeMeta` 里按 `m.v` 做迁移**，别让老玩家的存档读不出来。
+- 进度码 `RZ1.<校验>.<base64url>`：`Run.exportCode()` / `parseCode()` / `importCode()`。
+  校验只为发现「粘贴少了一截」，不防篡改（单机游戏，没必要）。
+  网址带 `#save=进度码` 时 `runui.js` 会读出来请玩家确认，然后把它从地址栏拿掉。
+- base64 和 UTF-8 是手写的，不用 `btoa` / `TextEncoder`——测试沙箱里没有它们，而且中文要原样往返。
+
 ## 1.7 声音：「锣鼓 + 鞭炮」
 
 声音跟画面是一套。`js/audio.js` 里有几件合成出来的「乐器」，新声音尽量拿它们拼，别再写裸的方波哔哔声：
@@ -120,7 +145,7 @@ node test/balance-sim.js   # 远征平衡模拟：电脑代打 N 局，看能走
 | 轮次 | 每轮每人恰好一次、最多连着两手、阵亡后照常轮转 |
 | 界面 | 不泄露出手顺序与对手读数、HUD 每帧 DOM 写入量、道具点两下才用掉 |
 | 收尾 | 暂停打断蓄力后电脑要能接着打、分出胜负后对局必须停止 |
-| 爽快规则与远征 | `test/run-mode.js`：没漏进经典规则、击飞、油桶连锁、预览、遗物、改造、远征状态机、电脑代打跑完整局 |
+| 爽快规则与远征 | `test/run-mode.js`：没漏进经典规则、击飞、油桶连锁、预览、遗物、改造、场地区域、Boss 招式、进度码、远征状态机、电脑代打跑完整局 |
 
 浏览器侧自检页（配合 headless Chrome 截图，见第 6 节）：
 
@@ -128,7 +153,7 @@ node test/balance-sim.js   # 远征平衡模拟：电脑代打 N 局，看能走
 test/render-check.html?map=sky&n=4&frames=900
 test/ui-check.html?stage=title|setup|codex|battle|fire|aimline|pause|enemy|items|itemarmed|ultimate|result
 test/perf-check.html?n=200
-test/run-check.html?stage=hub|map|boss|reward|shop|rest|event|over|battle|charge|bossfight|flow
+test/run-check.html?stage=hub|backup|import|map|boss|reward|shop|rest|event|over|battle|charge|bossfight|field|flow
 test/sfx-check.html        # 音效试听 + 离线量峰值；headless 下 --dump-dom 看 #report
 test/weapon-check.html?f=6 # 所有武器的弹体与落地效果总览
 ```
@@ -146,7 +171,8 @@ js/physics.js     弹道推进与伤害公式。不碰渲染、不改战车状�
 js/render.js      背景海报、战车造型、弹体、粒子。纯绘制，不含规则
 js/audio.js       WebAudio 合成音效（锣鼓 + 鞭炮，见 1.7 节），无外部音频文件
 js/ai.js          电脑：粗扫角度/力度网格 + 局部精搜 + 挖墙模式
-js/game.js        规则中枢：轮次、燃料、道具、爆炸结算、镜头；爽快规则的全部分支也在这
+js/game.js        规则中枢：轮次、燃料、道具、爆炸结算、镜头；爽快规则的大部分分支也在这
+js/field.js       留在场上的区域（地火 / 毒池 / 蛛网 / 龙卷）、Boss 的预告打击与招式表。接在 Game.prototype 上
 js/run.js         远征（肉鸽）的状态机与数据：路线、遭遇、改造、遗物、商店、局外存档。不碰 DOM
 js/main.js        界面装配、输入、主循环。只负责把 game 的状态画进 DOM
 js/runui.js       远征界面：把 run.js 的 state 画出来，把点击翻译成 Run.xxx()
@@ -279,6 +305,9 @@ test/hud-writes.js 计数版 DOM 桩件 + 接管 rAF，测 HUD 每帧写了多�
 16. **CSS 类名撞车。** `.relic`（左栏遗物条）和奖励卡的 `offer relic` 撞过，
     `.sub`（标题副标）和结算行里的 `.sub` 也撞过，都是换肤时才暴露的。
     新加的类名先 grep 一遍；容器内的样式尽量带上容器前缀（`.run-side .relic`）。
+18. **回合开头要改 `aiTimer` / 风向的东西，得放在 `beginTurn` 里它们被赋值之后。**
+    Boss 的「等上回合圈的地炸完再瞄」最初写在 `arcadeTurnStart` 里，被后面一行 `this.aiTimer = …` 盖掉了。
+    现在 `fieldTurnStart` / `bossTurnStart` 都在 `stepWind()` 之后调用。
 17. **`main.js` 里的定时器要判空。** 无头测试的沙箱没有 `setInterval`，
     标题主图的动画因此炸过一次。`test/hud-writes.js` 会整个加载 `main.js`。
 
@@ -307,10 +336,13 @@ CH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 - **道具图标是文字 + 色条**，没有单独的图标；`战车图鉴` 页面也还没收录道具。
 - **触屏**：道具栏能点，但没在真机上验证过；触屏按钮行里也没有「跳过回合」。
 - **经典模式没有存档/成长**：每局都是全新开始。（远征有局内存档和勋章解锁。）
-- **远征还缺的**：Boss 只是「更大更硬、带改造和护卫」，没有专属机制 / 阶段；
-  事件只有 4 个；电脑不会利用击飞和油桶（不会故意把人往悬崖下打）；
-  战斗中途刷新页面会回到选节点那一步，等于能重打（没做防 S/L）。
-- **电脑不认识油桶**：AI 模拟弹道时不知道炮弹会被油桶拦下，偶尔会把自己炸到。
+- **远征还缺的**：事件只有 4 个；战斗中途刷新页面会回到选节点那一步，等于能重打（没做防 S/L）；
+  电脑不会主动利用区域（不会故意把人往地火里打，只会自己躲）。
+- **Boss 的数值没有真人基线**：警戒线给多少回合、圈几块、落多重，都是模拟里调的。
+  v1.2 收尾时单独模拟三个 Boss（王牌代打、随机流派、85% 耐久进场，各 24 场）：
+  碾压者约 90%，风暴女王约 40%，终焉战车约 20%。后两个偏难，但代打不会集火护卫、
+  也不会挑流派，真人应该好不少——等试玩反馈再动，别继续对着模拟调。
+- **进度码不压缩**：带一局进行中的远征时约 2.7KB，放进网址够用但不短。
 - **道具会拉长比赛**：双方都带道具时，深海遗迹的对局均长从 25 回合涨到 35，
   p95 从 43 涨到 75。主要是双方轮流回血。如果想收一收，旋钮在
   `game.js` 的 `aiUseSupportItems()`（电脑回血的血量阈值）或道具的回复比例。

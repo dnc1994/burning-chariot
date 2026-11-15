@@ -96,7 +96,7 @@ function build() {
   sandbox.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
   vm.createContext(sandbox);
 
-  for (const f of ['data.js', 'terrain.js', 'physics.js', 'render.js', 'audio.js', 'ai.js', 'game.js', 'main.js']) {
+  for (const f of ['data.js', 'terrain.js', 'physics.js', 'render.js', 'audio.js', 'ai.js', 'game.js', 'field.js', 'main.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, 'js', f), 'utf8'), sandbox, { filename: f });
   }
   sandbox.RZ.SFX.setMuted(true);

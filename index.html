@@ -112,7 +112,8 @@
           <li><b>空格</b><span>按住蓄力，松开发射；蓄力条上的竖线是你上一发用的力度</span></li>
           <li><b>1 / 2 / 3</b><span>切换一号武器、二号武器、必杀</span></li>
           <li><b>Enter</b><span>跳过本回合（油不够时用来攒燃料）</span></li>
-          <li><b>G</b><span>开关炮口指示线（只显示角度，不预测落点）</span></li>
+          <li><b>G</b><span>开关炮口指示线（经典只显示角度；爽快规则下是弹道预览）</span></li>
+          <li><b>F</b><span>敌方回合加速</span></li>
           <li><b>M</b><span>静音</span></li>
           <li><b>Esc</b><span>暂停菜单</span></li>
         </ul>
@@ -130,7 +131,14 @@
             场上的油桶一点就炸，还会连锁。</li>
           <li><b>弹道预览</b>：默认画出这一发的前半段轨迹（按 G 开关），落点仍要自己估；
             上方还会显示出手顺序。出发前打开「硬核」就把这些都关掉。</li>
+          <li><b>留在场上的东西</b>：有些武器落地后会留下一块区域，头顶写着名字和还剩几轮。
+            <b>地火</b>（赤焰、红龙和烈火的必杀）和<b>毒池</b>（毒蜘蛛）会伤到回合开始时站在里面的战车——
+            包括放它的人；<b>蛛网</b>里移动耗油 ×3、也很难被击飞；<b>龙卷</b>会把人卷起来顺风甩出去。</li>
+          <li><b>Boss 的警戒线</b>：Boss 会先在地上圈出黄黑相间的警戒线，到它下一回合那里才挨打——
+            你有一整个回合挪开。血量掉到一定程度会换一套更狠的招。</li>
           <li><b>花式赏金</b>：直击、超远狙击、一炮双响、借桶杀人、击飞出界都会额外给金币。</li>
+          <li><b>备份进度</b>：进度只存在这台设备的浏览器里。在远征营地的「进度备份」里可以导出一串进度码
+            （或下载成文件、复制成链接），在任何设备上导入就能接着玩。</li>
           <li><b>勋章</b>：远征结束按战绩发勋章，用来解锁新战车；通关后开放更高的进阶难度。</li>
         </ul>
       </div>
@@ -175,6 +183,7 @@
       <div class="queue" id="queue" hidden></div>
 
       <div class="hud-top-right">
+        <button class="icon-btn" id="btn-fast" title="敌方回合加速 (F)">快</button>
         <button class="icon-btn" id="btn-guide" title="炮口指示线 (G)">瞄</button>
         <button class="icon-btn" id="btn-mute" title="静音 (M)">音</button>
         <button class="icon-btn" id="btn-pause" title="菜单 (Esc)">≡</button>
@@ -257,6 +266,7 @@
 <script src="js/audio.js"></script>
 <script src="js/ai.js"></script>
 <script src="js/game.js"></script>
+<script src="js/field.js"></script>
 <script src="js/run.js"></script>
 <script src="js/main.js"></script>
 <script src="js/runui.js"></script>

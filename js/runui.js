@@ -13,6 +13,8 @@
   var hub = { pick: Run.STARTERS[0], asc: 0, hardcore: false };
   var slotPick = null;              // 正在给哪个改造挑武器：{from:'reward'|'shop', index}
   var quitArmed = false;
+  // 进度备份面板：mode 是 null / 'export' / 'import'；pending 是读出来、等玩家确认要不要覆盖的那份进度
+  var bk = { mode: null, text: '', msg: '', pending: null, raw: '' };
 
   var SLOT_NAMES = { w1: '一号武器', w2: '二号武器', ss: '必杀' };
   var NODE_NAMES = { fight: '战斗', elite: '精英战', boss: 'BOSS', shop: '商店', rest: '修整', event: '未知事件' };
@@ -55,7 +57,66 @@
           '<button class="chip' + (hub.hardcore ? ' active' : '') + '" data-act="hard" data-i="1">开（全靠自己记）</button></div>' +
         '<div class="run-go-row">' + go + '</div>' +
         '<p class="run-tip">战绩：远征 ' + meta.runs + ' 次 · 通关 ' + meta.wins + ' 次 · 单次最多打赢 ' + meta.best + ' 场</p>' +
+        backupHTML() +
       '</div></div>';
+  }
+
+  // ---- 进度备份 ----
+  function backupHTML() {
+    var h = '<h3 class="panel-h">进度备份</h3>' +
+      '<p class="run-tip">进度只存在这台设备的浏览器里，清理浏览器数据、换设备或太久没来都可能丢。' +
+      '导出一串进度码存好，随时能原样读回来，也能带到别的设备上。</p>';
+    if (Run.needsBackup(meta)) {
+      h += '<p class="bk-nag">' + (meta.sinceBackup >= 3 ? '已经 ' + meta.sinceBackup + ' 次远征没有备份了' : '你已经解锁了新东西，但还没备份过') + '</p>';
+    }
+    h += '<div class="chips"><button class="chip' + (bk.mode === 'export' ? ' active' : '') + '" data-act="bk-export">导出进度</button>' +
+      '<button class="chip' + (bk.mode === 'import' ? ' active' : '') + '" data-act="bk-import">导入进度</button></div>';
+    if (bk.mode === 'export') {
+      h += '<textarea class="bk-code" id="bk-code" readonly spellcheck="false">' + esc(bk.text) + '</textarea>' +
+        '<div class="chips"><button class="chip" data-act="bk-copy">复制进度码</button>' +
+        '<button class="chip" data-act="bk-file">下载成文件</button>' +
+        '<button class="chip" data-act="bk-link">复制带进度的链接</button></div>';
+    } else if (bk.mode === 'import') {
+      h += '<textarea class="bk-code" id="bk-in" spellcheck="false" placeholder="把进度码（或带进度的链接）粘贴到这里">' + esc(bk.text) + '</textarea>' +
+        '<div class="chips"><button class="chip" data-act="bk-read">读取</button>' +
+        '<label class="chip">从文件读取<input type="file" id="bk-pick" accept=".txt,text/plain" hidden></label></div>';
+    }
+    if (bk.msg) h += '<p class="bk-msg">' + esc(bk.msg) + '</p>';
+    return h;
+  }
+
+  /** 读出来一份进度，覆盖之前先让玩家看清楚里面是什么、会盖掉什么 */
+  function importHTML() {
+    var p = bk.pending, cur = meta;
+    var line = function (m, r) {
+      return '勋章 ' + m.medals + ' 枚，解锁 ' + m.unlocked.length + ' 辆战车，通关 ' + m.wins + ' 次' +
+        (r ? '，另有一局打到一半的远征（' + RZ.vehicleById(r.vehicleId).name + '，' + Run.ACTS[Math.min(r.act, 2)].name + '第 ' + (r.step + 1) + ' 层）' : '');
+    };
+    return '<div class="run-over"><div class="dialog wide">' +
+      '<h3>导入进度</h3>' +
+      '<div class="result-body">' +
+        '<div class="rrow bonus"><span></span><span>要导入的</span><span>' + line(p.meta, p.run) + '</span><span></span></div>' +
+        '<div class="rrow"><span></span><span>这台设备上的</span><span>' + line(cur, state && !state.over ? state : null) + '</span><span></span></div>' +
+      '</div>' +
+      '<p class="over-line">导入会覆盖这台设备上现在的进度，不能撤销。</p>' +
+      '<div class="row"><button class="btn btn-primary" data-act="bk-apply">覆盖并导入</button>' +
+      '<button class="btn" data-act="bk-cancel">不导入</button></div></div></div>';
+  }
+
+  function copyText(text, done) {
+    var fallback = function () {
+      var ta = $('bk-code');
+      try { if (ta) { ta.focus(); ta.select(); document.execCommand('copy'); } } catch (e) { /* 复制不了就让玩家自己选中复制 */ }
+      done();
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+    else fallback();
+  }
+
+  function tryRead(text) {
+    var r = Run.parseCode(text);
+    if (r.ok) { bk.pending = r; bk.raw = text; bk.msg = ''; }
+    else bk.msg = r.error;
   }
 
   // ================= 远征进行中 =================
@@ -231,7 +292,8 @@
     if (!state) state = Run.load();
     if (hub.asc > meta.asc) hub.asc = meta.asc;
     var html;
-    if (!state) html = hubHTML();
+    if (bk.pending) html = importHTML();
+    else if (!state) html = hubHTML();
     else if (state.over) html = overHTML();
     else html = '<div class="run-grid">' + sideHTML() + (state.pending ? pendingHTML() : choiceHTML()) + '</div>';
     root.innerHTML = html;
@@ -262,11 +324,14 @@
     RZ.SFX.resume(); RZ.SFX.click();
     if (act !== 'quit') quitArmed = false;
 
+    if (act.indexOf('bk-') === 0) { onBackup(act); render(); return; }
     if (act === 'pick') hub.pick = id;
     else if (act === 'asc') hub.asc = i;
     else if (act === 'hard') hub.hardcore = i === 1;
     else if (act === 'unlock') { if (Run.unlock(meta, hub.pick)) RZ.SFX.relic(); }
     else if (act === 'start') {
+      // 请浏览器别自动清理本站的数据。不是所有浏览器都认，认了也挡不住玩家自己清——所以才有进度码
+      try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e2) { /* 不支持就算了 */ }
       state = Run.newRun(hub.pick, { asc: hub.asc, hardcore: hub.hardcore });
       Run.save(state);
     }
@@ -303,8 +368,51 @@
     render();
   }
 
+  function onBackup(act) {
+    var done = function (what) { Run.markBackup(); bk.msg = what; render(); };
+    if (act === 'bk-export') { bk.mode = bk.mode === 'export' ? null : 'export'; bk.text = Run.exportCode(); bk.msg = ''; }
+    else if (act === 'bk-import') { bk.mode = bk.mode === 'import' ? null : 'import'; bk.text = ''; bk.msg = ''; }
+    else if (act === 'bk-copy') copyText(bk.text, function () { done('进度码已复制。找个地方存好它。'); });
+    else if (act === 'bk-link') {
+      var link = location.href.split('#')[0] + '#save=' + bk.text;
+      copyText(link, function () { done('链接已复制。在另一台设备上打开它就能导入。'); });
+    }
+    else if (act === 'bk-file') {
+      try {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([bk.text], { type: 'text/plain' }));
+        a.download = '燃烧战车进度.txt';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        done('已下载「燃烧战车进度.txt」。');
+      } catch (e) { bk.msg = '这个浏览器下载不了文件，请改用「复制进度码」。'; }
+    }
+    else if (act === 'bk-read') { bk.text = $('bk-in') ? $('bk-in').value : ''; tryRead(bk.text); }
+    else if (act === 'bk-apply') {
+      var r = Run.importCode(bk.raw);
+      bk.pending = null; bk.mode = null; bk.text = '';
+      bk.msg = r.ok ? '进度已导入。' : r.error;
+      state = null;                                   // 重新从存档里读
+    }
+    else if (act === 'bk-cancel') { bk.pending = null; }
+  }
+
   window.addEventListener('DOMContentLoaded', function () {
-    $('run-root').addEventListener('click', onClick);
+    var root = $('run-root');
+    root.addEventListener('click', onClick);
+    root.addEventListener('change', function (e) {      // 「从文件读取」
+      var f = e.target && e.target.id === 'bk-pick' && e.target.files && e.target.files[0];
+      if (!f) return;
+      var fr = new FileReader();
+      fr.onload = function () { bk.text = String(fr.result || ''); tryRead(bk.text); render(); };
+      fr.readAsText(f);
+    });
+    // 网址里带着进度（#save=…）：读出来等玩家确认，然后把它从地址栏里拿掉，免得刷新时再问一遍
+    if (location.hash.indexOf('#save=') === 0) {
+      tryRead(location.hash.slice(6));
+      try { history.replaceState(null, '', location.href.split('#')[0]); } catch (e) { location.hash = ''; }
+      bk.mode = bk.pending ? null : 'import';
+      App.show('run');
+    }
   });
 
   RZ.RunUI = {
