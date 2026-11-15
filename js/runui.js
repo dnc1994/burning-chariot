@@ -265,7 +265,7 @@
     if (act === 'pick') hub.pick = id;
     else if (act === 'asc') hub.asc = i;
     else if (act === 'hard') hub.hardcore = i === 1;
-    else if (act === 'unlock') Run.unlock(meta, hub.pick);
+    else if (act === 'unlock') { if (Run.unlock(meta, hub.pick)) RZ.SFX.relic(); }
     else if (act === 'start') {
       state = Run.newRun(hub.pick, { asc: hub.asc, hardcore: hub.hardcore });
       Run.save(state);
@@ -285,18 +285,18 @@
       var from = t.getAttribute('data-from');
       var c = from === 'reward' ? state.pending.choices[i] : state.pending.stock[i];
       if (c.type === 'mod') slotPick = { from: from, index: i };       // 改造还要再挑一把武器
-      else if (from === 'reward') Run.takeReward(state, i);
-      else Run.buy(state, i);
+      else if (from === 'reward') { if (Run.takeReward(state, i)) RZ.SFX.relic(); }
+      else if (Run.buy(state, i)) { if (c.type === 'relic') RZ.SFX.relic(); else RZ.SFX.coin(); }
     }
     else if (act === 'slot') {
       var slot = t.getAttribute('data-slot');
-      if (t.getAttribute('data-from') === 'reward') Run.takeReward(state, i, slot);
-      else Run.buy(state, i, slot);
+      var okSlot = t.getAttribute('data-from') === 'reward' ? Run.takeReward(state, i, slot) : Run.buy(state, i, slot);
+      if (okSlot) RZ.SFX.relic();
       slotPick = null;
     }
-    else if (act === 'skip') { slotPick = null; Run.takeReward(state, -1); }
+    else if (act === 'skip') { slotPick = null; if (Run.takeReward(state, -1)) RZ.SFX.coin(); }
     else if (act === 'leave') { slotPick = null; Run.leave(state); }
-    else if (act === 'rest') Run.rest(state, id);
+    else if (act === 'rest') { if (Run.rest(state, id)) RZ.SFX.heal(); }
     else if (act === 'event') Run.eventChoose(state, i);
 
     if (state && !state.over) Run.save(state);

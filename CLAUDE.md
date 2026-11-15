@@ -54,6 +54,28 @@
 - 背景是开局画一次存进离屏画布的（`Background.render()`），每帧只有一次 `drawImage`。
   往背景里加会动的东西要单独在 `draw()` 里画，别让整张底图每帧重画。
 
+## 1.7 声音：「锣鼓 + 鞭炮」
+
+声音跟画面是一套。`js/audio.js` 里有几件合成出来的「乐器」，新声音尽量拿它们拼，别再写裸的方波哔哔声：
+
+| 乐器 | 用在哪 |
+| --- | --- |
+| `block` 梆子 | 界面点按、倒计时、蓄力鼓点 |
+| `drum` 鼓 | 出膛、爆炸的底、受击、对面的回合 |
+| `gong` 锣（`bend>0` 小锣往上挑，`bend<0` 大锣往下坠） | 轮到你、拿遗物 / 击破、战败、过热 |
+| `cymbal` 镲 | 喝彩、暴击、落雷 |
+| `bell` 碰铃 | 捡道具、金币、空投 |
+| `pluck` 扬琴 | 胜负的旋律、回血。只用五声音阶（文件里那排 `C5…E6`） |
+| `pop` / `crackle` 鞭炮 | 每次爆炸的尾巴 |
+
+- 每个声音是 `SOUNDS` 表里的一个 `function (t, 参数)`，对外自动包成 `RZ.SFX.名字(参数)`，
+  静音或没有音频环境时什么都不做——所以规则代码里可以随手调，不用判空。
+- **会在同一帧里被调很多次的声音要加 `gate()`**（爆炸、受击、移动、回血），不然散射武器一落地就是十几声叠在一起。
+- 蓄力是鼓点而不是常驻振荡器：`updateCharge(p)` 每帧被调，自己按间隔决定敲不敲。没有会「卡住一直响」的东西。
+- 没法在无头环境里听。`test/sfx-check.html` 会把每个声音离线渲染一遍，量峰值 / 响度 / 时长，
+  标出没声、可能爆音、NaN 的；它同时是试听页（每个声音一个按钮）。改完音效先开它。
+  响度大致分三档：界面 0.05~0.2，战斗 0.2~0.5，胜负和开战 0.6~0.8（峰值）。
+
 ## 2. 跑起来 / 测试
 
 ```sh
@@ -87,6 +109,7 @@ test/render-check.html?map=sky&n=4&frames=900
 test/ui-check.html?stage=title|setup|codex|battle|fire|aimline|pause|enemy|items|itemarmed|ultimate|result
 test/perf-check.html?n=200
 test/run-check.html?stage=hub|map|boss|reward|shop|rest|event|over|battle|charge|bossfight|flow
+test/sfx-check.html        # 音效试听 + 离线量峰值；headless 下 --dump-dom 看 #report
 ```
 
 ## 3. 架构
@@ -100,7 +123,7 @@ js/data.js        全部数值：战车、武器、地图、道具、常量。�
 js/terrain.js     可破坏地形：1bit 掩码 + 同尺寸 ImageData，爆炸只回写脏矩形；印刷风上色与弹坑余烬
 js/physics.js     弹道推进与伤害公式。不碰渲染、不改战车状态
 js/render.js      背景海报、战车造型、弹体、粒子。纯绘制，不含规则
-js/audio.js       WebAudio 合成音效，无外部音频文件
+js/audio.js       WebAudio 合成音效（锣鼓 + 鞭炮，见 1.7 节），无外部音频文件
 js/ai.js          电脑：粗扫角度/力度网格 + 局部精搜 + 挖墙模式
 js/game.js        规则中枢：轮次、燃料、道具、爆炸结算、镜头；爽快规则的全部分支也在这
 js/run.js         远征（肉鸽）的状态机与数据：路线、遭遇、改造、遗物、商店、局外存档。不碰 DOM

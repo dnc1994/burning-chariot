@@ -318,7 +318,7 @@
     if (u.alive && !u.ai && !u.canAfford(u.vehicle.w1)) {
       this.say('燃料不足，按 Enter 跳过本回合攒油', '#ffb4b4');
     }
-    if (!first) RZ.SFX.turn();
+    if (!first) RZ.SFX.turn(!u.ai);
     if (this.turnNo % 4 === 0) this.dropSupply();
     this.checkWin();
     // 回合一开头就被持续伤害 / 过热烧死：直接交出回合，别让一辆残骸占着三十秒
@@ -337,7 +337,7 @@
     // 战场过热：拖得越久烧得越狠，按最大耐久的百分比扣，对谁都一样
     var over = this.round - this.arc.overheatRound;
     if (over >= 0) {
-      if (over === 0 && u === this.roundQueueFirst) this.say('战场过热！所有战车每回合持续受损', '#ff7b3d');
+      if (over === 0 && u === this.roundQueueFirst) { this.say('战场过热！所有战车每回合持续受损', '#ff7b3d'); RZ.SFX.overheat(); }
       this.damage(u, Math.round(u.maxHp * 0.04 * (over + 1)), null, '#ff7b3d');
     }
   };
@@ -484,6 +484,7 @@
     var before = u.hp;
     u.hp = Math.min(u.maxHp, u.hp + amount);
     this.fx.text(u.x, u.y - 84, '+' + Math.round(u.hp - before), '#5ad27a');
+    RZ.SFX.heal();
   };
 
   Game.prototype.refill = function (u, amount) {
@@ -552,6 +553,7 @@
     if (pk.crit && Math.random() < pk.crit) {
       m *= 1.6;
       this.fx.text(u.x, u.y - 120, '暴击！', '#ff5a5a', true);
+      RZ.SFX.crit();
     }
     return m;
   };
@@ -636,6 +638,7 @@
       var pr = this.props[i];
       if (!pr.lit && Math.hypot(pr.x - x, (pr.y - 10) - y) < radius + 16) {
         pr.lit = true;
+        RZ.SFX.fuse();
         this.pendingBlasts.push({ wait: 9, prop: pr, w: BARREL, attacker: attacker, mul: 1 });
       }
     }
@@ -677,6 +680,7 @@
     this.style.tags[key] = true;
     this.style.gold += gold;
     this.banner = { text: text, sub: '+' + gold + ' 金', life: 70, max: 70 };
+    RZ.SFX.cheer();
   };
 
   /**
@@ -695,6 +699,7 @@
         u.airborne = true; u.fallFrom = u.y;
         this.fx.burst(x, y - 40, 50, ['#bff6ff', '#2fd0ff', '#ffffff']);
         this.fx.text(x, y - 110, '牵引回收', '#2fd0ff', true);
+        RZ.SFX.revive();
         this.damage(u, Math.round(u.maxHp * 0.25), null, '#ffb4b4');
         return u.alive;
       }
@@ -849,6 +854,7 @@
       u.dots.length = 0;
       this.fx.burst(u.x, u.y - 18, 60, ['#bff6ff', '#ffffff', '#5ad27a']);
       this.fx.text(u.x, u.y - 96, '应急核心启动！', '#5ad27a', true);
+      RZ.SFX.revive();
       return;
     }
     u.hp = 0; u.alive = false;
@@ -867,6 +873,7 @@
     this.fx.debris(u.x, u.y - 12, 26, u.vehicle.pal[0]);
     this.fx.text(u.x, u.y - 90, silent || '击破！', '#ff8a5c', true);
     this.cam.shake = Math.max(this.cam.shake, 12);
+    if (silent) RZ.SFX.fall();              // 掉出地图的，先来一声往下滑的哨
     RZ.SFX.ko();
     this.say(u.name + ' 被击破', RZ.TEAM_COLORS[u.team]);
   };
@@ -876,7 +883,8 @@
     var def = RZ.ITEMS[(Math.random() * RZ.ITEMS.length) | 0];
     var x = 120 + Math.random() * (RZ.WORLD_W - 240);
     this.supplies.push({ x: x, y: -40, vy: 0, def: def, landed: false });
-    this.say('空投了一个道具', def.color);      // 具体是什么，捡到才知道
+    this.say('空投了一个道具', def.color);
+    RZ.SFX.supply();      // 具体是什么，捡到才知道
   };
 
   Game.prototype.collect = function (sup, u) {

@@ -284,6 +284,7 @@
     $('btn-guide').classList.toggle('on', setup.guide);
     $('btn-mute').classList.toggle('on', !RZ.SFX.isMuted());
     show('game');
+    RZ.SFX.stinger();                           // 开战：咚、咚、锵
     if (!raf) raf = requestAnimationFrame(loop);
   }
 
