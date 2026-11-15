@@ -362,6 +362,7 @@
     var v = u.vehicle, p = v.pal;
     ctx.save();
     ctx.translate(u.x, u.y);
+    if (u.scale && u.scale !== 1) ctx.scale(u.scale, u.scale);
 
     // 影子 + 阵营光环（2v2 时一眼分清敌我）
     ctx.save();
@@ -559,6 +560,63 @@
   };
 
   /** 补给箱 */
+  /** 弹道预览：一串越来越淡的点，沿轨迹缓缓流动 */
+  RZ.drawPreview = function (ctx, pts, color, t) {
+    var n = pts.length / 2, step = 3, shift = Math.floor(t / 60) % step;
+    ctx.save();
+    // 白芯 + 深色描边：亮沙地、暗星空上都要看得清，队伍色只做外圈
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = 'rgba(10,13,18,0.85)';
+    ctx.lineWidth = 1.5;
+    for (var i = shift; i < n; i += step) {
+      ctx.globalAlpha = 0.8 * (1 - i / n) + 0.2;
+      ctx.beginPath();
+      ctx.arc(pts[i * 2], pts[i * 2 + 1], 3.2 - 1.4 * (i / n), 0, 6.2832);
+      ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+  };
+
+  /** 油桶 */
+  RZ.drawBarrel = function (ctx, b, t) {
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    if (b.lit) ctx.translate(Math.sin(t * 0.09) * 1.5, 0);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(0, 0, 11, 3, 0, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = b.lit ? '#ff7b3d' : '#c0392b';
+    roundRect(ctx, -8, -22, 16, 22, 3); ctx.fill();
+    ctx.fillStyle = '#7a1f15';
+    ctx.fillRect(-8, -16, 16, 2); ctx.fillRect(-8, -8, 16, 2);
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath(); ctx.moveTo(0, -17); ctx.lineTo(-4, -9.5); ctx.lineTo(4, -9.5); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  };
+
+  /** 画面上方的喝彩字：弹出来、停一下、淡掉。画在屏幕坐标里，不跟镜头走 */
+  RZ.drawBanner = function (ctx, b, viewW, viewH) {
+    var age = b.max - b.life;
+    var pop = age < 8 ? 0.6 + 0.5 * (age / 8) : 1.1 - Math.min(0.1, (age - 8) * 0.02);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, b.life / 18);
+    ctx.translate(viewW / 2, viewH * 0.24);
+    ctx.scale(pop, pop);
+    ctx.textAlign = 'center';
+    ctx.font = '900 44px ' + RZ.FONT;
+    ctx.lineWidth = 7; ctx.strokeStyle = 'rgba(20,6,0,0.85)';
+    ctx.strokeText(b.text, 0, 0);
+    ctx.fillStyle = '#ffd166';
+    ctx.fillText(b.text, 0, 0);
+    if (b.sub) {
+      ctx.font = 'bold 20px ' + RZ.FONT;
+      ctx.lineWidth = 4;
+      ctx.strokeText(b.sub, 0, 30);
+      ctx.fillStyle = '#ffe6a8';
+      ctx.fillText(b.sub, 0, 30);
+    }
+    ctx.restore();
+  };
+
   RZ.drawSupply = function (ctx, s, t) {
     ctx.save();
     ctx.translate(s.x, s.y);

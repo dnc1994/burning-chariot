@@ -973,5 +973,8 @@ head('延迟决定出手顺序');
   check(g.turnOrder()[0] === b, '延迟变高后让出先手');
 }
 
+// ---------- 17. 爽快规则与远征模式 ----------
+require('./run-mode')(RZ, check, head);
+
 console.log(`\n${fail ? '❌' : '✅'} 通过 ${pass} 项，失败 ${fail} 项`);
 process.exit(fail ? 1 : 0);

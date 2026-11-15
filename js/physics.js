@@ -71,7 +71,8 @@
       var u = us[i];
       if (!u.alive) continue;
       if (u === p.owner && p.age < 8) continue;
-      if (Math.abs(p.x - u.x) < UNIT_HW && Math.abs(p.y - (u.y - 12)) < UNIT_HH) return u;
+      var sc = u.scale || 1;                     // Boss 体型更大，命中框跟着放大
+      if (Math.abs(p.x - u.x) < UNIT_HW * sc && Math.abs(p.y - (u.y - 12 * sc)) < UNIT_HH * sc) return u;
     }
     return null;
   }

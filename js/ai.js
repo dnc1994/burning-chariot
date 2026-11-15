@@ -134,7 +134,7 @@
   }
 
   RZ.aiThink = function (game, unit, isRethink) {
-    var d = DIFF[game.opts.difficulty || 'normal'] || DIFF.normal;
+    var d = DIFF[unit.aiLevel || game.opts.difficulty || 'normal'] || DIFF.normal;   // 远征里每辆车可以有自己的水平
     var enemies = game.units.filter(function (u) { return u.alive && u.team !== unit.team; });
     if (!enemies.length) return { aim: unit.aim, power: 55, weaponIdx: 0, face: unit.face };
 

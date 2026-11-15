@@ -9,19 +9,51 @@
   var HALF_W = 8;              // 落脚检测的车身半宽：太宽会让车悬在凸坡上方
   var MAX_WIND_STEP = 0.3;     // 单回合风力最多变动 windMax 的三成
 
+  // 「爽快」规则集的旋钮：远征模式和经典对战里的可选规则都用它。
+  // 经典规则下 game.arc 是 null，下面所有带 this.arc 的分支都不会走到，
+  // 所以原版的数值、轮次、信息隐藏一条都没动。
+  var ARCADE = {
+    startFuel: 60,             // 开局就摸得到二号武器，三四回合一发必杀
+    regenMul: 1.6,
+    charge: 1.3,               // 蓄力更快，满条约 1.3 秒
+    aiWait: 12,
+    settle: 20,
+    overheatRound: 9           // 第几轮开始「战场过热」，逼着双方分出胜负
+  };
+  // 油桶：谁炸到算谁的，连锁也算
+  var BARREL = {
+    name: '油桶', fuel: 0, damage: 170, radius: 84, digMul: 0.9, count: 1, isBarrel: true,
+    shell: { r: 6, color: '#ffe08a', glow: '#ff3b1f', trail: '#ff5b2a' },
+    dot: { type: 'fire', turns: 2, damage: 30 }
+  };
+
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
 
   // ================= 战车实例 =================
-  function Unit(cfg, index) {
+  function Unit(cfg, index, arc) {
     var v = cfg.vehicle;
+    // perks 是远征遗物折算出来的一组数值加成；经典模式下是空对象，读出来全是 undefined
+    this.perks = cfg.perks || {};
+    this.scale = cfg.scale || 1;       // Boss 画得更大、也更好打中
+    this.boss = !!cfg.boss;
+    this.aiLevel = cfg.aiLevel || null;
+    this.vx = 0;                       // 被爆炸击飞时的水平速度（仅爽快规则）
+    this.streak = 0;                   // 连续命中的回合数
+    this.firstShot = true;
+    this.turnsTaken = 0;
+    this.reviveLeft = this.perks.revive || 0;
+    this.rescueLeft = this.perks.rescue || 0;   // 掉出地图时被拖回来的次数
+    this.safeX = 0;                              // 最近一次站稳的位置
+    this.revived = false;
     this.index = index;
     this.vehicle = v;
     this.name = cfg.name;
     this.team = cfg.team;
     this.ai = !!cfg.ai;
-    this.maxHp = v.hp; this.hp = v.hp;
+    this.maxHp = v.hp; this.hp = cfg.hp != null ? Math.min(v.hp, cfg.hp) : v.hp;
     this.atk = v.atk; this.def = v.def;
-    this.maxFuel = RZ.MAX_FUEL; this.fuel = RZ.START_FUEL;
+    this.maxFuel = RZ.MAX_FUEL;
+    this.fuel = arc ? Math.min(RZ.MAX_FUEL, arc.startFuel + (this.perks.startFuel || 0)) : RZ.START_FUEL;
     this.spentThisTurn = 0;      // 本回合总耗油，决定这一手的延迟
     this.moveSpent = 0;          // 其中花在移动上的部分，跑太多要扣回油
     this.dealtThisTurn = 0;      // 本回合打出的伤害，打中人有回油奖励
@@ -69,9 +101,19 @@
     this.guide = !!opts.guide;
     this.log = [];
 
+    this.arc = opts.arcade ? ARCADE : null;
+    this.hardcore = !!opts.hardcore;     // 爽快规则下的硬核开关：不给弹道预览和出手队列
+    this.props = [];                     // 油桶
+    this.pendingBlasts = [];             // 延迟引爆：油桶连锁、余震
+    this.hitstop = 0;                    // 顿帧
+    this.slowmo = 0;                     // 击破时的慢动作
+    this.banner = null;                  // 画面中央的喝彩字
+    this.style = { gold: 0, tags: {} };  // 花式命中攒下的赏金，远征结算时用
+    this.killsThisTurn = 0;
+
     this.units = [];
     var i;
-    for (i = 0; i < opts.roster.length; i++) this.units.push(new Unit(opts.roster[i], i));
+    for (i = 0; i < opts.roster.length; i++) this.units.push(new Unit(opts.roster[i], i, this.arc));
 
     var pts = this.terrain.spawnPoints(this.units.length);
     // 让同队战车不要挤在一起：红队占奇数位，蓝队占偶数位
@@ -112,6 +154,7 @@
     this.aiPlan = null;
     this.aiTimer = 0;
 
+    if (this.arc) this.placeProps();
     this.beginTurn(true);
   }
 
@@ -145,6 +188,7 @@
     for (i = 0; i < ordered.length; i++) ordered[i].roundPos = i;
     this.round++;
     this.roundQueue = ordered;
+    this.roundQueueFirst = ordered[0];
   };
 
   /**
@@ -188,8 +232,21 @@
       lastPower: view.lastPower,
       weaponIdx: view.weaponIdx,
       weaponFuel: view.weapon().fuel,
-      canSS: view.canAfford(view.vehicle.ss)
+      canSS: view.canAfford(view.vehicle.ss),
+      queue: this.queueView()
     };
+  };
+
+  /**
+   * 出手队列：只有爽快规则、且没开硬核时才给。经典规则永远返回 null——
+   * 「不显示出手顺序」那条不变量靠这里守着。
+   */
+  Game.prototype.queueView = function () {
+    if (!this.arc || this.hardcore) return null;
+    var out = [], i;
+    if (this.active && this.active.alive) out.push(this.active);
+    for (i = 0; i < this.roundQueue.length; i++) if (this.roundQueue[i].alive) out.push(this.roundQueue[i]);
+    return out.map(function (u) { return { name: u.name, team: u.team, index: u.index }; });
   };
 
   /** 界面替谁在看：单人是玩家那一队，同屏双人就是当前行动的那一队 */
@@ -246,12 +303,14 @@
     u.noFire = false;
     u.buffDouble = false;        // 双倍只在用它的那个回合有效
     u.shotMode = null;
+    this.killsThisTurn = 0;
+    if (this.arc) this.arcadeTurnStart(u);
     if (!u.canAfford(u.weapon())) u.weaponIdx = 0;   // 油不够就退回一号武器
     this.charging = false;
     this.phase = 'aim';
     this.timeLeft = TURN_TIME;
     this.aiPlan = null;
-    this.aiTimer = 24;
+    this.aiTimer = this.arc ? this.arc.aiWait : 24;
 
     if (!first) this.stepWind();      // 开局那阵风用构造时定的，不再多走一步
 
@@ -262,6 +321,25 @@
     if (!first) RZ.SFX.turn();
     if (this.turnNo % 4 === 0) this.dropSupply();
     this.checkWin();
+    // 回合一开头就被持续伤害 / 过热烧死：直接交出回合，别让一辆残骸占着三十秒
+    if (!u.alive && this.result === null) { this.phase = 'settle'; this.settleTimer = 12; }
+  };
+
+  /** 爽快规则下每回合开头要结算的东西：遗物、过热 */
+  Game.prototype.arcadeTurnStart = function (u) {
+    var pk = u.perks;
+    u.turnsTaken++;
+    if (pk.repair && u.hp < u.maxHp) this.heal(u, u.maxHp * pk.repair);
+    if (pk.autoDouble && u.turnsTaken % 3 === 0) {
+      u.buffDouble = true;
+      this.fx.text(u.x, u.y - 104, '自动装填', '#ff7a3d');
+    }
+    // 战场过热：拖得越久烧得越狠，按最大耐久的百分比扣，对谁都一样
+    var over = this.round - this.arc.overheatRound;
+    if (over >= 0) {
+      if (over === 0 && u === this.roundQueueFirst) this.say('战场过热！所有战车每回合持续受损', '#ff7b3d');
+      this.damage(u, Math.round(u.maxHp * 0.04 * (over + 1)), null, '#ff7b3d');
+    }
   };
 
   /**
@@ -302,6 +380,10 @@
     var u = this.active;
     if (u) {
       u.delay = this.timedOut ? PASS_DELAY : this.delayFor(u);   // 决定下一轮的位次
+      if (this.arc && u.firedThisTurn) {
+        u.streak = u.dealtThisTurn > 0 ? Math.min(5, u.streak + 1) : 0;
+        if (u.perks.combo && u.streak >= 2 && u.alive) this.fx.text(u.x, u.y - 104, '连击 ×' + u.streak, '#ffd166');
+      }
       u.buffDouble = false;
       u.shotMode = null;
       // 按回合计的状态在「自己这一回合结束时」才递减。放在回合开始会少算一回合：
@@ -345,6 +427,7 @@
     var battle = Math.min(6, u.dealtThisTurn * 0.03);         // 打中了人
     var roam = Math.min(10, u.moveSpent * 0.3);               // 满地图乱跑
     var gain = Math.max(8, Math.round(v.regen + thrift + battle - roam));
+    if (this.arc) gain = Math.round(gain * this.arc.regenMul);
     var before = u.fuel;
     u.fuel = Math.min(u.maxFuel, u.fuel + gain);
     if (u.alive && u.fuel > before) {
@@ -444,6 +527,7 @@
     // 加强攻击：这一发 +50%，对必杀也算；定位炮不打伤害，就不消耗它
     var mul = 1;
     if (u.buffPower > 0 && w.damage > 0) { mul = 1.5; u.buffPower = 0; }
+    if (this.arc && w.damage > 0) mul *= this.perkMul(u);
 
     // 双倍攻击：普通武器连打两发（必杀和道具弹除外）
     var twice = u.buffDouble && !mode && u.weaponIdx !== 2;
@@ -456,6 +540,20 @@
     this.charging = false;
     RZ.SFX.stopCharge();
     if (!mode && u.weaponIdx === 2) this.say(u.name + ' 发动必杀 ' + w.name + '！', '#ffd166');
+  };
+
+  /** 遗物给这一发的伤害倍率：先发制人、连击、狂战士、暴击 */
+  Game.prototype.perkMul = function (u) {
+    var pk = u.perks, m = 1;
+    if (pk.ambush && u.firstShot) { m *= 2; this.fx.text(u.x, u.y - 104, '先发制人 ×2', '#ffd166'); }
+    u.firstShot = false;
+    if (pk.combo) m *= 1 + pk.combo * u.streak;
+    if (pk.berserk) m *= 1 + pk.berserk * (1 - Math.max(0, u.hp) / u.maxHp);
+    if (pk.crit && Math.random() < pk.crit) {
+      m *= 1.6;
+      this.fx.text(u.x, u.y - 120, '暴击！', '#ff5a5a', true);
+    }
+    return m;
   };
 
   /** 放弃出手，按已花掉的油结算延迟 */
@@ -471,16 +569,19 @@
   Game.prototype.explode = function (x, y, w, attacker, directTarget, dmgMul) {
     if (w.locator) { this.teleport(attacker, x, y); return; }   // 定位炮：不炸，人过去
     var radius = w.radius;
+    var arc = this.arc, apk = attacker ? attacker.perks : {};
+    if (arc && apk.blast) radius *= 1 + apk.blast;
     var damage = w.damage * (dmgMul || 1);
+    if (arc && w.isBarrel && apk.barrel) damage *= 2;
     var dig = radius * (w.digMul || 1);
     this.terrain.carve(x, y, dig);
     var s = w.shell;
     this.fx.burst(x, y, radius, [s.color, s.glow, '#ffffff', s.trail]);
     this.fx.debris(x, y, Math.min(26, radius * 0.35), this.map.ground.body);
-    this.cam.shake = Math.max(this.cam.shake, Math.min(16, radius * 0.16));
+    this.cam.shake = Math.max(this.cam.shake, Math.min(16, radius * 0.16) * (arc ? 1.5 : 1));
     RZ.SFX.explode(radius > 64);
 
-    var fake = { damage: damage, radius: radius };
+    var fake = { damage: damage, radius: radius }, hitFoes = 0;
     for (var i = 0; i < this.units.length; i++) {
       var t = this.units[i];
       if (!t.alive) continue;
@@ -488,8 +589,25 @@
       var dmg = RZ.explosionDamage(fake, attacker, t, d, radius);
       if (dmg <= 0) continue;
       if (t === directTarget) dmg = Math.round(dmg * RZ.DIRECT_BONUS);
+      var foe = attacker && t.team !== attacker.team;
+      if (arc && foe) {
+        hitFoes++;
+        if (t === directTarget) this.cheer(attacker, 'direct', '直击！', 5);
+        if (Math.abs(t.x - attacker.x) > 1000 && !w.isBarrel) this.cheer(attacker, 'snipe', '超远狙击！', 8);
+        if (w.isBarrel) this.cheer(attacker, 'barrel', '借桶杀人！', 6);
+      }
       this.damage(t, dmg, attacker, null, t === directTarget);
       if (w.dot) t.dots.push({ type: w.dot.type, turns: w.dot.turns, damage: w.dot.damage });
+      if (w.dot2) t.dots.push({ type: w.dot2.type, turns: w.dot2.turns, damage: w.dot2.damage });
+      if (arc && t.alive && !t.perks.anchor) {
+        // 横向击飞：离爆心越近、挨得越重飞得越远。悬崖边、浮岛上，这就是另一种杀法
+        var dirX = t.x >= x ? 1 : -1;
+        if (Math.abs(t.x - x) < 3 && attacker) dirX = t.x >= attacker.x ? 1 : -1;
+        var push = Math.min(9, 1.2 + dmg * 0.028) * (w.kb || 1) * (1 + (apk.kb || 0)) / t.scale;
+        t.vx += dirX * push;
+        t.vy = Math.min(t.vy, -Math.min(7, 2 + push * 0.7));
+        t.lastHitBy = attacker;
+      }
       if (w.stun && t.team !== (attacker ? attacker.team : -1)) {
         t.stunned = Math.max(t.stunned, w.stun);
         this.fx.text(t.x, t.y - 60, '麻痹', '#b98cff');
@@ -510,6 +628,147 @@
 
     if (w.onImpact === 'lightning') this.strikeLightning(x, y, w, attacker, damage);
     if (w.onImpact === 'carpet' && w.carpet) this.carpet(x, y, w, attacker, dmgMul);
+
+    if (!arc) return;
+    if (hitFoes >= 2) this.cheer(attacker, 'multi', '一炮双响！', 8);
+    // 油桶：被波及就点着，隔几帧再炸，连锁才看得清
+    for (i = 0; i < this.props.length; i++) {
+      var pr = this.props[i];
+      if (!pr.lit && Math.hypot(pr.x - x, (pr.y - 10) - y) < radius + 16) {
+        pr.lit = true;
+        this.pendingBlasts.push({ wait: 9, prop: pr, w: BARREL, attacker: attacker, mul: 1 });
+      }
+    }
+    if (w.cluster && !w.isChild) this.cluster(x, y, w, attacker, dmgMul);
+    // 余震：同一个落点紧跟着再来一下。范围比原爆炸大（人已经被掀开了，小了够不着），
+    // 威力只有四成。余震本身不再触发余震
+    if (apk.aftershock && !w.isAfter && !w.isBarrel && w.damage > 0) {
+      var aw = Object.create(w);
+      aw.isAfter = true; aw.isChild = true; aw.onImpact = null; aw.cluster = 0;
+      aw.damage = w.damage * apk.aftershock; aw.radius = w.radius * 1.5; aw.digMul = 0.4;
+      this.pendingBlasts.push({ wait: 6, x: x, y: y, w: aw, attacker: attacker, mul: dmgMul || 1 });
+    }
+  };
+
+  /** 集束改造：落点再蹦出几颗小炸弹 */
+  Game.prototype.cluster = function (x, y, w, attacker, dmgMul) {
+    var cw = Object.create(w);
+    cw.isChild = true; cw.cluster = 0; cw.onImpact = null; cw.count = 1; cw.splitAt = null;
+    cw.damage = w.damage * 0.35; cw.radius = Math.max(24, w.radius * 0.6);
+    var n = Math.min(9, w.cluster);
+    for (var i = 0; i < n; i++) {
+      var a = (i + 0.5) / n * Math.PI;                 // 朝上半圆撒开
+      this.projectiles.push({
+        x: x, y: y - 8, vx: Math.cos(a) * (2.2 + Math.random() * 1.6), vy: -3.5 - Math.random() * 2.5,
+        w: cw, owner: attacker, team: attacker ? attacker.team : 0, dmgMul: dmgMul || 1,
+        age: 30, alive: true, bounceLeft: 0, pierceLeft: 0, didSplit: true, trail: []
+      });
+    }
+  };
+
+  /**
+   * 喝彩 + 赏金。只奖励真人玩家：这是给「打得漂亮」的反馈，电脑不需要。
+   * 同一个名目一回合只算一次，免得散射武器刷屏。
+   */
+  Game.prototype.cheer = function (attacker, tag, text, gold) {
+    if (!this.arc || !attacker || attacker.ai) return;
+    var key = tag + '@' + this.turnNo;
+    if (this.style.tags[key]) return;
+    this.style.tags[key] = true;
+    this.style.gold += gold;
+    this.banner = { text: text, sub: '+' + gold + ' 金', life: 70, max: 70 };
+  };
+
+  /**
+   * 牵引回收：远征里玩家的车掉出地图不会直接出局——一局四十分钟的远征
+   * 不该断送在一次失足上。每场只救一次，代价是四分之一的耐久。
+   * 从最后站稳的位置往两边找最近的一块地。
+   */
+  Game.prototype.rescue = function (u) {
+    for (var off = 0; off < 700; off += 12) {
+      for (var sign = -1; sign <= 1; sign += 2) {
+        var x = clamp(Math.round(u.safeX + off * sign), 20, RZ.WORLD_W - 20);
+        var y = this.terrain.groundBelow(x, 0);
+        if (y > RZ.WORLD_H - 30) continue;
+        u.rescueLeft--;
+        u.x = x; u.y = y - 60; u.vx = 0; u.vy = 0;
+        u.airborne = true; u.fallFrom = u.y;
+        this.fx.burst(x, y - 40, 50, ['#bff6ff', '#2fd0ff', '#ffffff']);
+        this.fx.text(x, y - 110, '牵引回收', '#2fd0ff', true);
+        this.damage(u, Math.round(u.maxHp * 0.25), null, '#ffb4b4');
+        return u.alive;
+      }
+    }
+    return false;
+  };
+
+  /** 开局在地面上撒几个油桶，避开战车脚下 */
+  Game.prototype.placeProps = function () {
+    var want = this.opts.barrels != null ? this.opts.barrels : 5, tries = 0;
+    while (this.props.length < want && tries++ < 80) {
+      var x = 90 + Math.random() * (RZ.WORLD_W - 180), ok = true, i;
+      for (i = 0; i < this.units.length; i++) if (Math.abs(this.units[i].x - x) < 130) ok = false;
+      for (i = 0; i < this.props.length; i++) if (Math.abs(this.props[i].x - x) < 90) ok = false;
+      var y = this.terrain.groundBelow(x, 0);
+      if (!ok || y > RZ.WORLD_H - 30) continue;
+      this.props.push({ x: Math.round(x), y: y, vy: 0, lit: false });
+    }
+  };
+
+  /** 油桶下落、延迟引爆的倒计时 */
+  Game.prototype.updateProps = function () {
+    var i;
+    for (i = this.props.length - 1; i >= 0; i--) {
+      var pr = this.props[i];
+      var g = this.terrain.groundBelow(pr.x, Math.max(0, pr.y - 6));
+      if (g > pr.y + 1) { pr.vy += this.map.gravity * 0.85; pr.y = Math.min(g, pr.y + pr.vy); }
+      else { pr.vy = 0; if (g < pr.y) pr.y = g; }
+      if (pr.y > RZ.WORLD_H + 60) this.props.splice(i, 1);
+    }
+    for (i = this.pendingBlasts.length - 1; i >= 0; i--) {
+      var b = this.pendingBlasts[i];
+      if (--b.wait > 0) continue;
+      this.pendingBlasts.splice(i, 1);
+      if (b.prop) {
+        var k = this.props.indexOf(b.prop);
+        if (k < 0) continue;
+        this.props.splice(k, 1);
+        this.explode(b.prop.x, b.prop.y - 10, b.w, b.attacker, null, b.mul);
+      } else {
+        this.explode(b.x, b.y, b.w, b.attacker, null, b.mul);
+      }
+    }
+  };
+
+  /**
+   * 弹道预览（爽快规则、非硬核）。跑的就是真实物理，所以风、重力、武器系数全算在内；
+   * 但默认只画前 45%——落点还得自己估。带「激光测距仪」才给全程。
+   * 返回 [x0,y0,x1,y1,...]，不该显示时返回 null。
+   */
+  Game.prototype.previewPath = function () {
+    var u = this.active;
+    if (!this.arc || this.hardcore || !this.guide) return null;
+    if (!u || u.ai || this.phase !== 'aim' || u.noFire) return null;
+    var power = this.charging ? Math.max(4, u.power) : (u.lastPower || 55);
+    var mode = u.shotMode;
+    var w = mode === 'fly' ? RZ.LOCATOR : mode === 'stun' ? RZ.STUN_SHELL : u.weapon();
+    var shots = RZ.launch(u, w, u.aim, power, this.map.gravity);
+    var p = shots[(shots.length / 2) | 0];
+    var team = u.team, self = this;
+    var env = {
+      terrain: this.terrain, gravity: this.map.gravity, wind: this.wind, recordTrail: false, spawn: [],
+      // 隐身的敌人不能被预览线「撞」出来
+      units: this.units.filter(function (o) { return !self.hiddenFrom(team, o); })
+    };
+    var pts = [], n = 0;
+    while (n++ < 420) {
+      var ev = RZ.step(p, env);
+      pts.push(p.x, p.y);
+      if (ev && ev.type !== 'bounce') break;
+    }
+    var keep = u.perks.scope ? 1 : 0.45;
+    pts.length = Math.max(2, ((pts.length / 2 * keep) | 0) * 2);
+    return pts;
   };
 
   Game.prototype.strikeLightning = function (x, y, w, attacker, damage) {
@@ -559,6 +818,8 @@
 
   Game.prototype.damage = function (target, amount, attacker, color, direct) {
     if (!target.alive || amount <= 0) return;
+    var arc = this.arc, tpk = target.perks;
+    if (arc && tpk.armor) amount = Math.max(1, Math.round(amount * (1 - tpk.armor)));
     target.hp -= amount;
     target.hitFlash = 14;
     this.fx.text(target.x, target.y - 76, '-' + amount, color || (direct ? '#fff1a8' : '#ffffff'), direct);
@@ -566,14 +827,42 @@
       attacker.dealtThisTurn += amount;      // 打中人，回合结束多回一点油
       this.log.push({ by: attacker.index, dmg: amount });
       this.turnsSinceDamage = 0;
+      if (arc) {
+        var apk = attacker.perks;
+        if (apk.siphon) attacker.fuel = Math.min(attacker.maxFuel, attacker.fuel + apk.siphon);
+        if (apk.vamp && attacker.alive) attacker.hp = Math.min(attacker.maxHp, attacker.hp + amount * apk.vamp);
+        // 荆棘：反弹回去的伤害不带攻击者，不会再弹回来
+        if (tpk.thorns && attacker.alive) this.damage(attacker, Math.max(1, Math.round(amount * tpk.thorns)), null, '#c8a0ff');
+      }
     }
+    if (arc && amount >= 110) this.hitstop = Math.max(this.hitstop, amount >= 260 ? 7 : 4);
     RZ.SFX.hurt();
-    if (target.hp <= 0) this.kill(target);
+    if (target.hp <= 0) this.kill(target, null, attacker);
   };
 
-  Game.prototype.kill = function (u, silent) {
+  Game.prototype.kill = function (u, silent, attacker) {
     if (!u.alive) return;
+    // 应急核心：只救得了被打死的，掉出地图救不回来
+    if (this.arc && !silent && u.reviveLeft > 0) {
+      u.reviveLeft--; u.revived = true;
+      u.hp = Math.round(u.maxHp * 0.4);
+      u.dots.length = 0;
+      this.fx.burst(u.x, u.y - 18, 60, ['#bff6ff', '#ffffff', '#5ad27a']);
+      this.fx.text(u.x, u.y - 96, '应急核心启动！', '#5ad27a', true);
+      return;
+    }
     u.hp = 0; u.alive = false;
+    if (this.arc) {
+      this.slowmo = 44;
+      this.hitstop = Math.max(this.hitstop, 8);
+      var by = attacker || u.lastHitBy;
+      if (by && by.team !== u.team) {
+        this.killsThisTurn++;
+        if (silent) this.cheer(by, 'ringout', '击飞出界！', 15);
+        if (this.killsThisTurn >= 2) this.cheer(by, 'double', '双杀！', 12);
+        if (u.boss) this.cheer(by, 'boss', 'BOSS 击破！', 30);
+      }
+    }
     this.fx.burst(u.x, u.y - 18, 84, ['#ffd166', '#ff6a1f', '#ffffff', '#8b2f10']);
     this.fx.debris(u.x, u.y - 12, 26, u.vehicle.pal[0]);
     this.fx.text(u.x, u.y - 90, silent || '击破！', '#ff8a5c', true);
@@ -682,6 +971,12 @@
 
   // ---- 主循环 ----
   Game.prototype.update = function (dtms) {
+    if (this.arc) {
+      // 顿帧：重击那一下整个世界停几帧；慢动作：击破后隔帧推进
+      if (this.banner && --this.banner.life <= 0) this.banner = null;
+      if (this.hitstop > 0) { this.hitstop--; return; }
+      if (this.slowmo > 0) { this.slowmo--; if (this.slowmo & 1) return; }
+    }
     this.t += 16;
     var i;
     this.fx.update();
@@ -693,13 +988,14 @@
       if (u.muzzleFlash > 0) u.muzzleFlash--;
       if (u.usedItemFlash > 0) u.usedItemFlash--;
       if (u.stealth <= 0) { u.lastSeenX = u.x; u.lastSeenY = u.y; }
+      if (!u.airborne) u.safeX = u.x;
     }
 
     if (this.result !== null) { this.updateCamera(); return; }
 
     // 蓄力
     if (this.charging && this.active) {
-      this.active.power = Math.min(100, this.active.power + CHARGE_RATE);
+      this.active.power = Math.min(100, this.active.power + (this.arc ? this.arc.charge : CHARGE_RATE));
       RZ.SFX.updateCharge(this.active.power);
     }
 
@@ -720,6 +1016,7 @@
 
     this.updatePhysics();
     this.updateSupplies();
+    if (this.arc) this.updateProps();
 
     for (i = this.effects.length - 1; i >= 0; i--) {
       if (--this.effects[i].life <= 0) this.effects.splice(i, 1);
@@ -729,7 +1026,7 @@
     }
 
     // 飞行阶段结束判定
-    if (this.phase === 'fly' && this.projectiles.length === 0) {
+    if (this.phase === 'fly' && this.projectiles.length === 0 && this.pendingBlasts.length === 0) {
       var rs = this.repeatShot;
       if (rs && rs.left > 0 && rs.u.alive) {
         // 双倍攻击的第二发：等第一发的坑炸完再打，所以两发会互相影响地形
@@ -742,14 +1039,14 @@
       } else {
         this.repeatShot = null;
         this.phase = 'settle';
-        this.settleTimer = 34;
+        this.settleTimer = this.arc ? this.arc.settle : 34;
       }
     }
     if (this.phase === 'settle') {
       var moving = false;
       for (i = 0; i < this.units.length; i++) if (this.units[i].alive && this.units[i].airborne) moving = true;
       if (!moving) this.settleTimer--;
-      if (this.settleTimer <= 0 && this.projectiles.length === 0) this.endTurn();
+      if (this.settleTimer <= 0 && this.projectiles.length === 0 && this.pendingBlasts.length === 0) this.endTurn();
     }
 
     this.updateCamera();
@@ -768,6 +1065,16 @@
       var p = this.projectiles[i];
       var ev = RZ.step(p, env);
       if ((p.age & 3) === 0) this.fx.trailPuff(p.x, p.y, p.w.shell.trail);
+      if (!ev && this.arc && p.w.damage > 0) {
+        // 炮弹直接撞上油桶：就地起爆
+        for (var k = 0; k < this.props.length; k++) {
+          var pr = this.props[k];
+          if (Math.abs(p.x - pr.x) < 11 && p.y > pr.y - 24 && p.y < pr.y + 2) {
+            ev = { type: 'hit', x: p.x, y: p.y, target: null };
+            break;
+          }
+        }
+      }
       if (!ev) continue;
       if (ev.type === 'bounce') { RZ.SFX.bounce(); continue; }
       if (ev.type === 'split') {
@@ -790,15 +1097,24 @@
         if (!u.airborne) { u.airborne = true; u.fallFrom = u.y; u.vy = Math.max(0, u.vy); }
         u.vy += this.map.gravity * 0.85;
         u.y += u.vy;
+        if (u.vx) {
+          // 击飞中的横向位移：撞到墙就弹回一点，撞到世界边缘就停
+          var nx = clamp(u.x + u.vx, 12, RZ.WORLD_W - 12);
+          if (this.terrain.solid(nx, u.y - 14) || this.terrain.solid(nx, u.y - 26)) u.vx *= -0.3;
+          else { if (nx !== u.x + u.vx) u.vx = 0; u.x = nx; }
+          u.vx *= 0.985;
+        }
         if (u.y > RZ.WORLD_H + 90) {
-          this.kill(u, this.map.voidBottom ? '坠入虚空！' : '沉没！');
+          if (this.arc && u.rescueLeft > 0 && this.rescue(u)) continue;
+          this.kill(u, this.map.voidBottom ? '坠入虚空！' : '沉没！', u.lastHitBy);
           continue;
         }
         var s2 = this.terrain.supportY(u.x, HALF_W, Math.max(0, u.y - 26));
         if (u.vy >= 0 && u.y >= s2) {
           u.y = s2; u.airborne = false;
           var drop = u.y - u.fallFrom;
-          if (drop > FALL_SAFE) {
+          u.vx = 0;
+          if (drop > FALL_SAFE && !(this.arc && u.perks.anchor)) {
             var d = Math.round((drop - FALL_SAFE) * 0.42);
             this.damage(u, d, null, '#ffb4b4');
             this.fx.debris(u.x, u.y, 12, this.map.ground.top);
@@ -973,6 +1289,7 @@
 
     var i;
     for (i = 0; i < this.supplies.length; i++) RZ.drawSupply(ctx, this.supplies[i], this.t);
+    for (i = 0; i < this.props.length; i++) RZ.drawBarrel(ctx, this.props[i], this.t);
 
     var viewer = this.viewerTeam();
     for (i = 0; i < this.units.length; i++) {
@@ -982,7 +1299,10 @@
     }
 
     // 只提示炮口指向，不预测落点——预测线会随蓄力乱跳，反而干扰手感
-    if (this.guide && this.phase === 'aim' && this.active && !this.active.ai) {
+    var path = this.previewPath();
+    if (path) {
+      RZ.drawPreview(ctx, path, RZ.TEAM_COLORS[this.active.team], this.t);
+    } else if (this.guide && this.phase === 'aim' && this.active && !this.active.ai) {
       RZ.drawAimRay(ctx, this.active, RZ.TEAM_COLORS[this.active.team]);
     }
 
@@ -1017,8 +1337,11 @@
     }
 
     ctx.restore();
+    if (this.banner) RZ.drawBanner(ctx, this.banner, viewW, viewH);
   };
 
   RZ.Game = Game;
+  RZ.ARCADE = ARCADE;
+  RZ.BARREL = BARREL;
   RZ.TURN_TIME = TURN_TIME;
 })(window.RZ || (window.RZ = {}));

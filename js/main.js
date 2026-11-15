@@ -5,9 +5,12 @@
   var $ = function (id) { return document.getElementById(id); };
   var canvas, ctx, game = null, paused = false, raf = 0;
   var lastTurn = -1, lastWeaponSig = '';
+  // 远征模式接管结算：打完把这一局交回去，而不是「再来一局」
+  var battleHook = null;
 
   var setup = {
     mode: '1v1',
+    rules: 'classic',
     difficulty: 'normal',
     guide: true,
     mapId: RZ.MAPS[0].id,
@@ -22,6 +25,7 @@
     for (var i = 0; i < list.length; i++) list[i].classList.remove('active');
     $('screen-' + name).classList.add('active');
     if (name === 'game') resize();
+    if (name === 'run' && RZ.RunUI) RZ.RunUI.render();
   }
 
   document.addEventListener('click', function (e) {
@@ -242,15 +246,29 @@
 
   // ================= 开始 / 结束对局 =================
   function startGame() {
-    RZ.SFX.resume();
-    stopGame();
-    game = new RZ.Game({
+    battleHook = null;
+    launch({
       mapId: setup.mapId,
       roster: buildRoster(),
       difficulty: setup.difficulty,
       guide: setup.guide,
+      arcade: setup.rules === 'arcade',
       humanTeam: setup.mode === 'hotseat' ? null : 0
     });
+  }
+
+  function launch(opts) {
+    RZ.SFX.resume();
+    stopGame();
+    game = new RZ.Game(opts);
+    setup.guide = !!opts.guide;
+    var inRun = !!battleHook;
+    $('btn-restart').hidden = inRun;            // 远征里不能重打，输了就是输了
+    $('btn-quit').textContent = inRun ? '放弃这场战斗' : '返回大厅';
+    $('pause-note').textContent = inRun ? '放弃等于战败，这次远征会就此结束。' : '';
+    $('btn-continue').hidden = !inRun;
+    $('btn-again').hidden = inRun;
+    $('btn-lobby').hidden = inRun;
     window.__game = game;                       // 调试/自检用的句柄
     game.viewW = canvas.clientWidth; game.viewH = canvas.clientHeight;
     game.cam.x = game.cam.tx = Math.max(0, game.active.x - game.viewW / 2);
@@ -487,6 +505,17 @@
       : (h.live && !h.unit.canAfford(h.unit.vehicle.w1) ? '燃料不足　Enter 跳过本回合攒油'
         : '← → 移动　↑ ↓ 角度　空格 蓄力发射　Enter 跳过'));
 
+    // 出手队列（经典规则下 h.queue 恒为 null，这块始终隐藏）
+    setHidden('queue', !h.queue);
+    if (h.queue) {
+      var qh = '<i>出手顺序</i>';
+      for (i = 0; i < h.queue.length; i++) {
+        qh += '<span class="' + (i === 0 ? 'now' : '') + '" style="border-color:' +
+          RZ.TEAM_COLORS[h.queue[i].team] + '">' + h.queue[i].name + '</span>';
+      }
+      setHTML('queue', qh);
+    }
+
     if (game.turnNo !== lastTurn) {
       lastTurn = game.turnNo;
       armedItem = -1;
@@ -627,6 +656,10 @@
         '<span class="dmg">输出 ' + Math.round(tally[u.index] || 0) + '</span>' +
         '</div>';
     });
+    if (battleHook && game.style.gold > 0 && game.result === human) {
+      body += '<div class="rrow bonus"><span></span><span>花式赏金</span><span></span>' +
+        '<span class="dmg">+' + game.style.gold + ' 金</span></div>';
+    }
     $('result-body').innerHTML = body;
     $('overlay-result').classList.add('show');
   }
@@ -666,6 +699,24 @@
   }
   window.addEventListener('resize', resize);
 
+  /** 远征的一场打完（或中途放弃）：把这局交还给远征界面 */
+  function finishBattle() {
+    var hook = battleHook, g = game;
+    battleHook = null;
+    stopGame();
+    $('overlay-pause').classList.remove('show');
+    $('overlay-result').classList.remove('show');
+    if (hook) hook(g);
+  }
+
+  // 给远征界面（runui.js）用的出口
+  RZ.App = {
+    show: show,
+    portrait: portrait,
+    detailHTML: detailHTML,
+    startBattle: function (opts, hook) { battleHook = hook; launch(opts); }
+  };
+
   // ================= 启动 =================
   window.addEventListener('DOMContentLoaded', function () {
     canvas = $('stage');
@@ -675,6 +726,7 @@
     buildShop();
     buildCodex();
     chipGroup('mode-chips', 'mode', String);
+    chipGroup('rules-chips', 'rules', String);
     chipGroup('diff-chips', 'difficulty', String);
     chipGroup('guide-chips', 'guide', function (v) { return v === '1'; });
 
@@ -692,7 +744,11 @@
     };
     $('btn-resume').onclick = togglePause;
     $('btn-restart').onclick = startGame;
-    $('btn-quit').onclick = function () { stopGame(); show('title'); };
+    $('btn-quit').onclick = function () {
+      if (battleHook && game) { game.result = 1; finishBattle(); return; }
+      stopGame(); show('title');
+    };
+    $('btn-continue').onclick = finishBattle;
     $('btn-again').onclick = startGame;
     $('btn-lobby').onclick = function () { stopGame(); show('title'); };
     $('btn-pause').onclick = togglePause;
