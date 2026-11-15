@@ -271,8 +271,13 @@
       }
     }
     u.kitTurn = (u.kitTurn || 0);
-    if (u.kitTurn % ph.every === 0) this.bossMark(u, ph);
-    u.kitTurn++;
+    // 上一批还没落（对手还没轮到过）：这回合不圈新的，也不推进节拍，免得警戒线越叠越多
+    var waiting = false;
+    for (var q = 0; q < this.telegraphs.length; q++) if (this.telegraphs[q].owner === u) waiting = true;
+    if (!waiting) {
+      if (u.kitTurn % ph.every === 0) this.bossMark(u, ph);
+      u.kitTurn++;
+    }
     // 有东西正在落地：等它炸完电脑再瞄，不然它算弹道时用的还是炸之前的地形
     if (landed) this.aiTimer = Math.max(this.aiTimer, 50 + landed * 12);
   };
@@ -329,11 +334,25 @@
   };
 
   /** 让 owner 上回合圈的地全部落下来。返回落了几块 */
+  /**
+   * 警戒线要等「对手真的有过一个能动的回合」才算数。
+   * 轮次规则允许同一辆车连着出手两次（上一轮压轴 + 下一轮打头），Boss 赶上连动时，
+   * 刚圈的地下一手就落——玩家根本没机会挪。所以落不落看的是对手轮到过没有，不是 Boss 自己过了几回合。
+   * 被麻痹的回合不算：动不了等于没轮到。
+   */
+  Game.prototype.armTelegraphs = function (u) {
+    if (u.stunned > 0) return;
+    for (var i = 0; i < this.telegraphs.length; i++) {
+      var tg = this.telegraphs[i];
+      if (tg.owner.team !== u.team) tg.armed = true;
+    }
+  };
+
   Game.prototype.resolveTelegraphs = function (owner) {
     var n = 0;
     for (var i = this.telegraphs.length - 1; i >= 0; i--) {
       var tg = this.telegraphs[i];
-      if (tg.owner !== owner) continue;
+      if (tg.owner !== owner || !tg.armed) continue;
       this.telegraphs.splice(i, 1);
       var gy = this.terrain.groundBelow(clamp(tg.x, 2, RZ.WORLD_W - 2), 0);
       if (gy >= RZ.WORLD_H - 4) gy = RZ.WORLD_H * 0.6;          // 底下是空的：在半空炸（龙卷也立得住）

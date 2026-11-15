@@ -414,7 +414,14 @@ module.exports = function runModeTests(RZ, check, head) {
     check(me.hp === hp0, '圈地当回合不伤人');
     check(g.dangerAt(me.x, me.y), '警戒线算危险地带（电脑会躲）');
     g.bossTurnStart(boss);
-    check(g.telegraphs.length === 0 && g.pendingBlasts.length === 2, '下一回合：圈的地开始落下');
+    check(g.telegraphs.length === 2 && g.pendingBlasts.length === 0 && me.hp === hp0,
+      'Boss 连着出手两次：玩家还没轮到，警戒线不落、也不叠新的');
+    me.stunned = 1; g.armTelegraphs(me); me.stunned = 0;
+    g.bossTurnStart(boss);
+    check(g.telegraphs.length === 2 && g.pendingBlasts.length === 0, '玩家被麻痹的回合不算轮到过');
+    g.armTelegraphs(me);
+    g.bossTurnStart(boss);
+    check(g.telegraphs.length === 0 && g.pendingBlasts.length === 2, '玩家轮到过之后，Boss 的下一回合：圈的地开始落下');
     settle(g, 120);
     check(me.hp < hp0 - 60, '没挪开就挨炸', `-${Math.round(hp0 - me.hp)}`);
 
@@ -423,6 +430,7 @@ module.exports = function runModeTests(RZ, check, head) {
     d.bossTurnStart(b2);
     you.x -= 220; you.y = d.terrain.groundBelow(you.x, 0);
     const far = d.telegraphs.every((t) => Math.abs(t.x - you.x) > t.r + 60);
+    d.armTelegraphs(you);
     d.bossTurnStart(b2); settle(d, 120);
     check(!far || you.hp === h1, '挪开了就毫发无伤');
   }
@@ -446,6 +454,7 @@ module.exports = function runModeTests(RZ, check, head) {
     const toward = me.x < boss.x ? -1 : 1;
     check(Math.sign(g.wind) === toward && Math.abs(g.wind) >= g.map.windMax * 0.49, '风暴女王把风拧向玩家', `风 ${g.wind.toFixed(1)}`);
     check(g.telegraphs.length === 1 && g.telegraphs[0].strike === 'twister', '第一阶段圈地放龙卷');
+    g.armTelegraphs(me);
     g.bossTurnStart(boss);
     check(g.hazards.some((h) => h.type === 'twister'), '龙卷落在圈的地上');
     check(me.airborne, '没挪开的玩家被当场卷起');

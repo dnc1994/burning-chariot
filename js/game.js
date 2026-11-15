@@ -331,6 +331,7 @@
     if (!first) this.stepWind();      // 开局那阵风用构造时定的，不再多走一步
     if (this.arc) {
       this.fieldTurnStart(u);                           // 站在地火 / 毒池 / 龙卷里
+      this.armTelegraphs(u);                            // 轮到过对手的警戒线才算数（见 field.js）
       if (u.kit && u.alive) this.bossTurnStart(u);      // Boss：上回合圈的地落下来，再圈新的
       if (u.alive && !u.ai && this.dangerAt(u.x, u.y)) this.say('你脚下有危险——挪开！', '#ff5a5a');
     }
