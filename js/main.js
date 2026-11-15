@@ -299,6 +299,7 @@
 
   // ================= 输入 =================
   var keys = Object.create(null);
+  var PAN_CODES = { KeyW: 1, KeyA: 1, KeyS: 1, KeyD: 1 };
 
   window.addEventListener('keydown', function (e) {
     if ($('screen-game').classList.contains('active')) {
@@ -306,7 +307,9 @@
     }
     var k = e.key;
     if (k === ' ' || k === 'Spacebar') k = 'Space';
-    if (e.code) keys[e.code] = true;            // WASD 挪镜头按物理键位认，不受输入法 / 大小写影响
+    // WASD 挪镜头按物理键位认，不受输入法 / 大小写影响。只记这四个：
+    // 空格的 code 也叫 'Space'，和下面归一化后的键名撞车，全记的话会被「屏蔽按键重复」当成已按下，蓄力就失灵了
+    if (PAN_CODES[e.code]) keys[e.code] = true;
     if (keys[k]) return;                        // 屏蔽系统按键重复
     keys[k] = true;
     onKeyDown(k);
@@ -315,7 +318,7 @@
   window.addEventListener('keyup', function (e) {
     var k = e.key;
     if (k === ' ' || k === 'Spacebar') k = 'Space';
-    if (e.code) keys[e.code] = false;
+    if (PAN_CODES[e.code]) keys[e.code] = false;
     keys[k] = false;
     onKeyUp(k);
   });

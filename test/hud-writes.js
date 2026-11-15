@@ -110,6 +110,8 @@ function build() {
       return sandbox.__game;
     },
     frame(ts) { if (rafCb) rafCb(ts); },
+    /** 发一个真的键盘事件：走 main.js 的监听器，和浏览器里按键是同一条路 */
+    key(type, key, code) { (listeners[type] || []).forEach((fn) => fn({ key, code, preventDefault() {} })); },
     reset() { for (const k in stats) stats[k] = 0; },
     total() { return stats.text + stats.style + stats.html + stats.cls + stats.hidden; }
   };
@@ -150,6 +152,27 @@ function runChecks(check) {
   h.frame(ts += 16);
   check(h.els['txt-hp']._text !== hpBefore, '数值真的变了照样会写进 DOM（没缓存过头）',
     `${hpBefore} → ${h.els['txt-hp']._text}`);
+
+  // 键盘：按真实的 key + code 走一遍监听器。空格的 code 叫 'Space'，和归一化后的键名相同——
+  // 曾经因为把 code 也记进按键表，空格被「屏蔽按键重复」吞掉，蓄不了力
+  game.cancelCharge();
+  if (game.active.ai) { game.active = game.units.find((u) => !u.ai); }
+  game.phase = 'aim'; game.active.noFire = false;
+  h.key('keydown', ' ', 'Space');
+  check(game.charging === true, '按下空格开始蓄力');
+  for (let i = 0; i < 20; i++) h.frame(ts += 16);
+  h.key('keyup', ' ', 'Space');
+  check(game.charging === false && game.active && game.units.some((u) => u.firedThisTurn), '松开空格把炮打出去');
+  const camBefore = game.cam.tx;
+  h.key('keydown', 'd', 'KeyD');
+  for (let i = 0; i < 10; i++) h.frame(ts += 16);
+  h.key('keyup', 'd', 'KeyD');
+  check(game.cam.free === true || game.cam.tx !== camBefore, '按 D 挪镜头');
+  const a0 = game.units.find((u) => !u.ai).aim;
+  h.key('keydown', 'ArrowUp', 'ArrowUp');
+  for (let i = 0; i < 3; i++) h.frame(ts += 16);
+  h.key('keyup', 'ArrowUp', 'ArrowUp');
+  check(game.result !== null || game.units.find((u) => !u.ai).aim !== a0 || !game.arc, '方向键仍然管用');
 }
 
 /** 道具栏：点一次选中、再点一次才用掉 */
