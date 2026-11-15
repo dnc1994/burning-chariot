@@ -461,7 +461,7 @@
   Run.battleOpts = function (state, playerAI) {
     var node = state.node, roster = [], i;
     var pv = Run.playerVehicle(state), pk = Run.perks(state);
-    pk.rescue = node.type === 'boss' ? 2 : 1;   // 牵引回收：每场一次，Boss 战两次（见 game.js 的 rescue()）
+    pk.rescue = 1;                              // 牵引回收：掉出地图被拖回来，不限次数，每次扣两成耐久（见 game.js 的 rescue()）
     roster.push({
       vehicle: pv, team: 0, ai: !!playerAI, aiLevel: typeof playerAI === 'string' ? playerAI : null, name: pv.name,
       items: state.items.slice(), perks: pk, hp: Math.min(pv.hp, state.hp)

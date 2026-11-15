@@ -147,10 +147,20 @@ module.exports = function runModeTests(RZ, check, head) {
     me.y = RZ.WORLD_H + 80; me.airborne = true; me.vy = 2;
     settle(g, 300);
     check(me.alive && me.y < RZ.WORLD_H, '牵引回收：掉出地图被拖回来');
-    check(me.hp < hp0 && me.rescueLeft === 0, '回收要掉血，且每场只有一次', `${hp0}→${Math.round(me.hp)}`);
+    check(Math.abs((hp0 - me.hp) - Math.round(me.maxHp * 0.2)) < 1, '回收扣两成耐久', `${hp0}→${Math.round(me.hp)}`);
+    const l = g.terrain.groundBelow(me.x - 26, 0), r = g.terrain.groundBelow(me.x + 26, 0);
+    check(Math.abs(l - me.y) < 60 && Math.abs(r - me.y) < 60, '拖回来的落点左右都有地，不是一根尖');
     me.y = RZ.WORLD_H + 80; me.airborne = true; me.vy = 2;
-    settle(g, 60);
-    check(!me.alive, '第二次掉下去就真的出局');
+    settle(g, 300);
+    check(me.alive && me.y < RZ.WORLD_H, '再掉一次照样拖回来：不限次数');
+    me.hp = me.maxHp * 0.1;
+    me.y = RZ.WORLD_H + 80; me.airborne = true; me.vy = 2;
+    settle(g, 300);
+    check(!me.alive, '耐久不够扣了，掉下去才出局');
+    const c = mk({ barrels: 0, mapId: 'sky' }, { perks: { rescue: 1 } });
+    c.units[0].y = RZ.WORLD_H + 80; c.units[0].airborne = true; c.units[0].vy = 2;
+    settle(c, 60);
+    check(!c.units[0].alive, '经典规则没有牵引回收');
   }
 
   // ---------- 油桶 ----------

@@ -45,7 +45,6 @@
     this.firstShot = true;
     this.turnsTaken = 0;
     this.reviveLeft = this.perks.revive || 0;
-    this.rescueLeft = this.perks.rescue || 0;   // 掉出地图时被拖回来的次数
     this.safeX = 0;                              // 最近一次站稳的位置
     this.revived = false;
     this.index = index;
@@ -705,26 +704,32 @@
 
   /**
    * 牵引回收：远征里玩家的车掉出地图不会直接出局——一局四十分钟的远征
-   * 不该断送在一次失足上。每场只救一次，代价是四分之一的耐久。
-   * 从最后站稳的位置往两边找最近的一块地。
+   * 不该断送在一次失足上。**不限次数**，每次扣两成耐久：掉下去是「贵」，不是「死」。
+   * （原来每场只救一次。浮岛图上两三个敌人轮流削你脚下那块地，一场掉两回很平常，第二回就直接出局了。）
+   * 从最后站稳的位置往两边找最近的一块「够宽的」地——拖回一根快断的尖上等于白救；实在没有才将就。
    */
   Game.prototype.rescue = function (u) {
-    for (var off = 0; off < 700; off += 12) {
-      for (var sign = -1; sign <= 1; sign += 2) {
-        var x = clamp(Math.round(u.safeX + off * sign), 20, RZ.WORLD_W - 20);
-        var y = this.terrain.groundBelow(x, 0);
+    var spot = null, fallback = null, t = this.terrain;
+    for (var off = 0; off < 900 && !spot; off += 12) {
+      for (var sign = -1; sign <= 1 && !spot; sign += 2) {
+        var x = clamp(Math.round(u.safeX + off * sign), 30, RZ.WORLD_W - 30);
+        var y = t.groundBelow(x, 0);
         if (y > RZ.WORLD_H - 30) continue;
-        u.rescueLeft--;
-        u.x = x; u.y = y - 60; u.vx = 0; u.vy = 0;
-        u.airborne = true; u.fallFrom = u.y;
-        this.fx.burst(x, y - 40, 50, ['#bff6ff', '#2fd0ff', '#ffffff']);
-        this.fx.text(x, y - 110, '牵引回收', '#2fd0ff', true);
-        RZ.SFX.revive();
-        this.damage(u, Math.round(u.maxHp * 0.25), null, '#ffb4b4');
-        return u.alive;
+        if (!fallback) fallback = { x: x, y: y };
+        // 左右各 26px 都有差不多高的地、脚下至少 30px 厚、而且不在地火 / 警戒线里
+        var l = t.groundBelow(x - 26, 0), r = t.groundBelow(x + 26, 0);
+        if (Math.abs(l - y) < 40 && Math.abs(r - y) < 40 && t.solid(x, y + 30) && !this.dangerAt(x, y)) spot = { x: x, y: y };
       }
     }
-    return false;
+    spot = spot || fallback;
+    if (!spot) return false;
+    u.x = spot.x; u.y = spot.y - 60; u.vx = 0; u.vy = 0;
+    u.airborne = true; u.fallFrom = u.y;
+    this.fx.burst(spot.x, spot.y - 40, 50, ['#bff6ff', '#2fd0ff', '#ffffff']);
+    this.fx.text(spot.x, spot.y - 110, '牵引回收', '#2fd0ff', true);
+    RZ.SFX.revive();
+    this.damage(u, Math.round(u.maxHp * 0.2), null, '#ffb4b4');
+    return u.alive;
   };
 
   /** 开局在地面上撒几个油桶，避开战车脚下 */
@@ -1176,7 +1181,7 @@
           u.vx *= 0.985;
         }
         if (u.y > RZ.WORLD_H + 90) {
-          if (this.arc && u.rescueLeft > 0 && this.rescue(u)) continue;
+          if (this.arc && u.perks.rescue && this.rescue(u)) continue;
           this.kill(u, this.map.voidBottom ? '坠入虚空！' : '沉没！', u.lastHitBy);
           continue;
         }
