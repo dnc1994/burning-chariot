@@ -9,6 +9,8 @@
  *   pierce            穿地距离(px)
  *   onImpact:'lightning'|'carpet'|'quake'
  *   dot:{type,turns,damage}    持续伤害
+ *   look / childLook  这把武器（以及它分裂、撒出来的子弹）长什么样、落地炸成什么样、
+ *                     是什么声音。只影响视听，不影响任何数值。见下面的 RZ.LOOKS
  */
 (function (RZ) {
   'use strict';
@@ -50,6 +52,45 @@
     return o;
   }
 
+  // ---- 武器的样子 ----------------------------------------------------
+  // look → { boom: 落地炸成什么样（render.js 的 BOOMS）, snd: 出膛和落地是什么声音（audio.js） }
+  // 弹体本身怎么画在 render.js 的 SHOTS[look] 里。加一把新武器：挑一个现成的 look，
+  // 或者在这里加一行、再去 render.js 加一个 SHOTS 函数。
+  RZ.LOOKS = {
+    shell:      { boom: 'fire',       snd: 'gun' },
+    cracker:    { boom: 'crackers',   snd: 'gun' },
+    meteor:     { boom: 'inferno',    snd: 'flame' },
+    dragonfire: { boom: 'flame',      snd: 'flame' },
+    dragonhead: { boom: 'flame',      snd: 'flame' },
+    breath:     { boom: 'inferno',    snd: 'flame' },
+    fist:       { boom: 'steel',      snd: 'steel' },
+    hammer:     { boom: 'steel',      snd: 'steel' },
+    thunderhammer: { boom: 'volt',    snd: 'steel' },
+    egg:        { boom: 'yolk',       snd: 'egg' },
+    goldegg:    { boom: 'yolk',       snd: 'egg' },
+    venom:      { boom: 'venom',      snd: 'goo' },
+    spit:       { boom: 'venom',      snd: 'goo' },
+    web:        { boom: 'web',        snd: 'goo' },
+    cyclone:    { boom: 'whirl',      snd: 'wind' },
+    drill:      { boom: 'dust',       snd: 'wind' },
+    tornado:    { boom: 'tornado',    snd: 'wind' },
+    spark:      { boom: 'volt',       snd: 'volt' },
+    storm:      { boom: 'volt',       snd: 'volt' },
+    dart:       { boom: 'volt',       snd: 'volt' },
+    oilcan:     { boom: 'groundfire', snd: 'flame' },
+    ember:      { boom: 'groundfire', snd: 'flame' },
+    napalm:     { boom: 'groundfire', snd: 'flame' },
+    beam:       { boom: 'energy',     snd: 'zap' },
+    lance:      { boom: 'energy',     snd: 'zap' },
+    rail:       { boom: 'energy',     snd: 'zap' },
+    mortar:     { boom: 'dust',       snd: 'heavy' },
+    bomblet:    { boom: 'dust',       snd: 'heavy' },
+    rock:       { boom: 'dust',       snd: 'heavy' },
+    beacon:     { boom: 'fire',       snd: 'gun' },
+    orb:        { boom: 'energy',     snd: 'zap' }
+  };
+  RZ.lookOf = function (w) { return RZ.LOOKS[w.look] || RZ.LOOKS.shell; };
+
   // ---- 十辆战车 ------------------------------------------------------
   // hp 血量 / atk 攻击 / def 防御 / climb 爬坡能力
   // moveCost 每移动 1px 的耗油 / regen 每回合结束的基础回油
@@ -61,9 +102,9 @@
       desc: '攻击、防御与移动力都很平均，任何地形都能打，新手首选。',
       hp: 860, atk: 100, def: 100, moveCost: 0.09, regen: 15, climb: 11,
       art: 'tank', pal: ['#e2543a', '#8f2618', '#ffb15c', '#2a1410'],
-      w1: w({ name: '烈火弹', fuel: 9, damage: 195, radius: 48, shell: SHELL.fire }),
-      w2: w({ name: '三连爆', fuel: 14, damage: 92, radius: 36, count: 3, spread: 5, shell: SHELL.fire }),
-      ss: w({ name: '焦土怒射', fuel: 112, damage: 330, radius: 78, digMul: 1.25, shell: SHELL.flame,
+      w1: w({ name: '烈火弹', look: 'shell', fuel: 9, damage: 195, radius: 48, shell: SHELL.fire }),
+      w2: w({ name: '三连爆', look: 'cracker', fuel: 14, damage: 92, radius: 36, count: 3, spread: 5, shell: SHELL.fire }),
+      ss: w({ name: '焦土怒射', look: 'meteor', fuel: 112, damage: 330, radius: 78, digMul: 1.25, shell: SHELL.flame,
               dot: { type: 'fire', turns: 2, damage: 42 } })
     },
     {
@@ -71,9 +112,9 @@
       desc: '拥有超乎想象的攻击力，移动力也非常强，但防御较薄。',
       hp: 780, atk: 128, def: 78, moveCost: 0.07, regen: 18, climb: 13,
       art: 'dragon', pal: ['#d92b2b', '#7a1010', '#ffd166', '#2a0a0a'],
-      w1: w({ name: '龙焰弹', fuel: 12, damage: 215, radius: 46, speedMul: 1.06, shell: SHELL.dragon }),
-      w2: w({ name: '双头龙', fuel: 18, damage: 128, radius: 40, count: 2, spread: 4, shell: SHELL.dragon }),
-      ss: w({ name: '灭世龙息', fuel: 128, damage: 400, radius: 92, digMul: 1.3, shell: SHELL.flame,
+      w1: w({ name: '龙焰弹', look: 'dragonfire', fuel: 12, damage: 215, radius: 46, speedMul: 1.06, shell: SHELL.dragon }),
+      w2: w({ name: '双头龙', look: 'dragonhead', fuel: 18, damage: 128, radius: 40, count: 2, spread: 4, shell: SHELL.dragon }),
+      ss: w({ name: '灭世龙息', look: 'breath', fuel: 128, damage: 400, radius: 92, digMul: 1.3, shell: SHELL.flame,
               dot: { type: 'fire', turns: 3, damage: 48 } })
     },
     {
@@ -81,9 +122,9 @@
       desc: '燃料消耗率最优，回合延迟短；必杀「电击锤」范围小，需要精确瞄准。',
       hp: 920, atk: 98, def: 118, moveCost: 0.065, regen: 14, climb: 12,
       art: 'mech', pal: ['#5b7fa6', '#243a52', '#ffd166', '#101d2a'],
-      w1: w({ name: '铁拳弹', fuel: 6, damage: 180, radius: 44, shell: SHELL.steel }),
-      w2: w({ name: '跳弹锤', fuel: 9, damage: 150, radius: 42, bounce: 2, shell: SHELL.steel }),
-      ss: w({ name: '电击锤', fuel: 126, damage: 470, radius: 34, digMul: 1.6, shell: SHELL.volt,
+      w1: w({ name: '铁拳弹', look: 'fist', fuel: 6, damage: 180, radius: 44, shell: SHELL.steel }),
+      w2: w({ name: '跳弹锤', look: 'hammer', fuel: 9, damage: 150, radius: 42, bounce: 2, shell: SHELL.steel }),
+      ss: w({ name: '电击锤', look: 'thunderhammer', fuel: 126, damage: 470, radius: 34, digMul: 1.6, shell: SHELL.volt,
               onImpact: 'lightning' })
     },
     {
@@ -91,9 +132,9 @@
       desc: '单发威力不高，却能撒出成片的龙蛋，最擅长打乱敌人的阵脚。',
       hp: 800, atk: 92, def: 105, moveCost: 0.09, regen: 14, climb: 11,
       art: 'dragon', pal: ['#f2a0c0', '#b05077', '#fff3d0', '#3a1526'],
-      w1: w({ name: '龙蛋', fuel: 8, damage: 168, radius: 46, gravMul: 0.92, shell: SHELL.egg }),
-      w2: w({ name: '散蛋雨', fuel: 12, damage: 62, radius: 30, count: 5, spread: 7, shell: SHELL.egg }),
-      ss: w({ name: '万蛋齐发', fuel: 108, damage: 96, radius: 40, shell: SHELL.egg,
+      w1: w({ name: '龙蛋', look: 'egg', fuel: 8, damage: 168, radius: 46, gravMul: 0.92, shell: SHELL.egg }),
+      w2: w({ name: '散蛋雨', look: 'egg', fuel: 12, damage: 62, radius: 30, count: 5, spread: 7, shell: SHELL.egg }),
+      ss: w({ name: '万蛋齐发', look: 'goldegg', childLook: 'egg', fuel: 108, damage: 96, radius: 40, shell: SHELL.egg,
               onImpact: 'carpet', carpet: { count: 7, spacing: 62, damage: 78, radius: 38 } })
     },
     {
@@ -101,11 +142,11 @@
       desc: '爬坡如履平地，毒液命中后会持续侵蚀敌人的装甲。',
       hp: 810, atk: 96, def: 96, moveCost: 0.085, regen: 13, climb: 20,
       art: 'spider', pal: ['#7bbf3a', '#2f5a17', '#d8ff8f', '#10200a'],
-      w1: w({ name: '毒液弹', fuel: 8, damage: 172, radius: 46, shell: SHELL.venom,
+      w1: w({ name: '毒液弹', look: 'venom', fuel: 8, damage: 172, radius: 46, shell: SHELL.venom,
               dot: { type: 'poison', turns: 2, damage: 30 } }),
-      w2: w({ name: '腐蚀三射', fuel: 11, damage: 84, radius: 34, count: 3, spread: 6, shell: SHELL.venom,
+      w2: w({ name: '腐蚀三射', look: 'spit', fuel: 11, damage: 84, radius: 34, count: 3, spread: 6, shell: SHELL.venom,
               dot: { type: 'poison', turns: 1, damage: 24 } }),
-      ss: w({ name: '剧毒之网', fuel: 115, damage: 250, radius: 96, digMul: 0.7, shell: SHELL.venom,
+      ss: w({ name: '剧毒之网', look: 'web', fuel: 115, damage: 250, radius: 96, digMul: 0.7, shell: SHELL.venom,
               dot: { type: 'poison', turns: 4, damage: 55 } })
     },
     {
@@ -113,9 +154,9 @@
       desc: '轻巧的浮空战车，弹速快、射程略胜一筹，但也最容易被风带偏。',
       hp: 760, atk: 104, def: 88, moveCost: 0.07, regen: 14, climb: 14,
       art: 'saucer', pal: ['#5ad2e8', '#1d6b7d', '#e8fbff', '#08222a'],
-      w1: w({ name: '气旋弹', fuel: 8, damage: 178, radius: 44, speedMul: 1.14, gravMul: 1.13, windMul: 1.6, shell: SHELL.wind }),
-      w2: w({ name: '穿地钻', fuel: 13, damage: 182, radius: 50, pierce: 24, digMul: 1.5, windMul: 1.2, shell: SHELL.wind }),
-      ss: w({ name: '龙卷风暴', fuel: 114, damage: 118, radius: 52, count: 4, spread: 3,
+      w1: w({ name: '气旋弹', look: 'cyclone', fuel: 8, damage: 178, radius: 44, speedMul: 1.14, gravMul: 1.13, windMul: 1.6, shell: SHELL.wind }),
+      w2: w({ name: '穿地钻', look: 'drill', fuel: 13, damage: 182, radius: 50, pierce: 24, digMul: 1.5, windMul: 1.2, shell: SHELL.wind }),
+      ss: w({ name: '龙卷风暴', look: 'tornado', fuel: 114, damage: 118, radius: 52, count: 4, spread: 3,
               windMul: 1.8, speedMul: 1.1, gravMul: 1.06, shell: SHELL.wind })
     },
     {
@@ -123,10 +164,10 @@
       desc: '雷神之锤的继承者，炮弹会在最高点分裂，落雷覆盖大片战场。',
       hp: 830, atk: 106, def: 102, moveCost: 0.105, regen: 15, climb: 11,
       art: 'mech', pal: ['#8f7ae6', '#3d2f75', '#ffe07a', '#161031'],
-      w1: w({ name: '雷霆弹', fuel: 10, damage: 186, radius: 46, shell: SHELL.volt }),
-      w2: w({ name: '裂空雷', fuel: 15, damage: 108, radius: 38, shell: SHELL.volt,
+      w1: w({ name: '雷霆弹', look: 'spark', fuel: 10, damage: 186, radius: 46, shell: SHELL.volt }),
+      w2: w({ name: '裂空雷', look: 'spark', childLook: 'dart', fuel: 15, damage: 108, radius: 38, shell: SHELL.volt,
               splitAt: 'apex', splitCount: 3, splitSpread: 16 }),
-      ss: w({ name: '神罚之雷', fuel: 124, damage: 300, radius: 56, shell: SHELL.volt,
+      ss: w({ name: '神罚之雷', look: 'storm', fuel: 124, damage: 300, radius: 56, shell: SHELL.volt,
               onImpact: 'lightning' })
     },
     {
@@ -134,11 +175,11 @@
       desc: '喷洒的燃油会把地面点燃，站在火里的敌人每回合都在流血。',
       hp: 840, atk: 110, def: 95, moveCost: 0.11, regen: 15, climb: 10,
       art: 'tank', pal: ['#ff7a2f', '#93370d', '#ffe08a', '#2b1206'],
-      w1: w({ name: '燃油弹', fuel: 10, damage: 188, radius: 48, shell: SHELL.flame,
+      w1: w({ name: '燃油弹', look: 'oilcan', fuel: 10, damage: 188, radius: 48, shell: SHELL.flame,
               dot: { type: 'fire', turns: 1, damage: 34 } }),
-      w2: w({ name: '四散火种', fuel: 14, damage: 76, radius: 34, count: 4, spread: 8, shell: SHELL.flame,
+      w2: w({ name: '四散火种', look: 'ember', fuel: 14, damage: 76, radius: 34, count: 4, spread: 8, shell: SHELL.flame,
               dot: { type: 'fire', turns: 1, damage: 22 } }),
-      ss: w({ name: '烈焰地毯', fuel: 122, damage: 120, radius: 46, shell: SHELL.flame,
+      ss: w({ name: '烈焰地毯', look: 'napalm', childLook: 'ember', fuel: 122, damage: 120, radius: 46, shell: SHELL.flame,
               onImpact: 'carpet', carpet: { count: 6, spacing: 74, damage: 104, radius: 44 },
               dot: { type: 'fire', turns: 3, damage: 40 } })
     },
@@ -147,10 +188,10 @@
       desc: '炮弹初速极快，出膛几乎立刻命中，也几乎不受风影响，压低炮口就是一条直线。',
       hp: 790, atk: 112, def: 90, moveCost: 0.1, regen: 16, climb: 11,
       art: 'saucer', pal: ['#b07dff', '#4b2a8a', '#f0e2ff', '#170a2b'],
-      w1: w({ name: '能量束', fuel: 11, damage: 190, radius: 44, speedMul: 1.35, gravMul: 1.75, windMul: 0.25, shell: SHELL.laser }),
-      w2: w({ name: '双子光矛', fuel: 16, damage: 118, radius: 36, count: 2, spread: 3,
+      w1: w({ name: '能量束', look: 'beam', fuel: 11, damage: 190, radius: 44, speedMul: 1.35, gravMul: 1.75, windMul: 0.25, shell: SHELL.laser }),
+      w2: w({ name: '双子光矛', look: 'lance', fuel: 16, damage: 118, radius: 36, count: 2, spread: 3,
               speedMul: 1.4, gravMul: 1.9, windMul: 0.2, shell: SHELL.laser }),
-      ss: w({ name: '轨道炮', fuel: 124, damage: 360, radius: 62, speedMul: 1.5, gravMul: 2.05,
+      ss: w({ name: '轨道炮', look: 'rail', fuel: 124, damage: 360, radius: 62, speedMul: 1.5, gravMul: 2.05,
               windMul: 0.1, digMul: 1.3, shell: SHELL.laser })
     },
     {
@@ -158,10 +199,10 @@
       desc: '装甲与血量全场最厚，炮弹沉重迟缓，一发入魂却慢得让人心焦。',
       hp: 980, atk: 118, def: 128, moveCost: 0.15, regen: 21, climb: 9,
       art: 'heavy', pal: ['#c9a227', '#6b5210', '#fff0b8', '#241a05'],
-      w1: w({ name: '重迫击', fuel: 14, damage: 205, radius: 52, gravMul: 1.15, shell: SHELL.rune }),
-      w2: w({ name: '裂地三连', fuel: 20, damage: 112, radius: 44, gravMul: 1.1, shell: SHELL.rune,
+      w1: w({ name: '重迫击', look: 'mortar', fuel: 14, damage: 205, radius: 52, gravMul: 1.15, shell: SHELL.rune }),
+      w2: w({ name: '裂地三连', look: 'mortar', childLook: 'bomblet', fuel: 20, damage: 112, radius: 44, gravMul: 1.1, shell: SHELL.rune,
               splitAt: 'apex', splitCount: 3, splitSpread: 9, digMul: 1.2 }),
-      ss: w({ name: '陨石审判', fuel: 132, damage: 340, radius: 84, gravMul: 1.18, digMul: 1.5, shell: SHELL.rune,
+      ss: w({ name: '陨石审判', look: 'rock', fuel: 132, damage: 340, radius: 84, gravMul: 1.18, digMul: 1.5, shell: SHELL.rune,
               onImpact: 'carpet', carpet: { count: 4, spacing: 96, damage: 130, radius: 56 } })
     }
   ];
@@ -263,11 +304,11 @@
 
   // 道具专用弹：不管选的是哪把武器，打出来的都是这两枚
   RZ.LOCATOR = w({
-    name: '定位炮', fuel: 8, damage: 0, radius: 0, shell: SHELL.beacon,
+    name: '定位炮', look: 'beacon', fuel: 8, damage: 0, radius: 0, shell: SHELL.beacon,
     locator: true, gravMul: 0.95
   });
   RZ.STUN_SHELL = w({
-    name: '麻痹弹', fuel: 10, damage: 55, radius: 54, digMul: 0.35, shell: SHELL.stun,
+    name: '麻痹弹', look: 'orb', fuel: 10, damage: 55, radius: 54, digMul: 0.35, shell: SHELL.stun,
     stun: 3
   });
 

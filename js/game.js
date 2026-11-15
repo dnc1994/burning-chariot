@@ -503,7 +503,7 @@
     }
     u.muzzleFlash = 8;
     this.cam.shake = Math.max(this.cam.shake, 4);
-    RZ.SFX.fire();
+    RZ.SFX.fire(RZ.lookOf(w).snd);
   };
 
   Game.prototype.fire = function () {
@@ -577,11 +577,10 @@
     if (arc && w.isBarrel && apk.barrel) damage *= 2;
     var dig = radius * (w.digMul || 1);
     this.terrain.carve(x, y, dig);
-    var s = w.shell;
-    this.fx.burst(x, y, radius, [s.color, s.glow, '#ffffff', s.trail]);
+    this.fx.boom(x, y, radius, w, this.map.ground);        // 每种武器落地的样子都不一样，见 render.js 的 BOOMS
     this.fx.debris(x, y, Math.min(26, radius * 0.35), this.map.ground.body);
     this.cam.shake = Math.max(this.cam.shake, Math.min(16, radius * 0.16) * (arc ? 1.5 : 1));
-    RZ.SFX.explode(radius > 64);
+    RZ.SFX.explode({ big: radius > 64, kind: w.isBarrel ? 'gun' : RZ.lookOf(w).snd });
 
     var fake = { damage: damage, radius: radius }, hitFoes = 0;
     for (var i = 0; i < this.units.length; i++) {
@@ -795,6 +794,7 @@
     var cw = Object.create(w);
     cw.onImpact = null; cw.count = 1; cw.damage = c.damage; cw.radius = c.radius;
     cw.dot = w.dot;
+    if (w.childLook) cw.look = w.childLook;
     for (var i = 0; i < c.count; i++) {
       var off = (i - (c.count - 1) / 2) * c.spacing;
       this.projectiles.push({
@@ -1072,7 +1072,7 @@
     for (var i = this.projectiles.length - 1; i >= 0; i--) {
       var p = this.projectiles[i];
       var ev = RZ.step(p, env);
-      if ((p.age & 3) === 0) this.fx.trailPuff(p.x, p.y, p.w.shell.trail);
+      this.fx.trail(p);
       if (!ev && this.arc && p.w.damage > 0) {
         // 炮弹直接撞上油桶：就地起爆
         for (var k = 0; k < this.props.length; k++) {
@@ -1093,7 +1093,11 @@
       if (ev.type === 'hit') this.explode(ev.x, ev.y, p.w, p.owner, ev.target, p.dmgMul);
       this.projectiles.splice(i, 1);
     }
-    while (this.pendingSpawn.length) this.projectiles.push(this.pendingSpawn.pop());
+    while (this.pendingSpawn.length) {
+      var kid = this.pendingSpawn.pop();
+      if (kid.w.childLook) kid.w.look = kid.w.childLook;   // 分裂出来的子弹可以换一副样子（只影响外观）
+      this.projectiles.push(kid);
+    }
 
     // 开火方的强化只作用于这一发
     // 战车重力与落地
@@ -1320,6 +1324,7 @@
       if (e.type === 'bolt') RZ.drawBolt(ctx, e.x, e.y0, e.y1, e.life);
     }
 
+    this.fx.drawMarks(ctx, this.t);
     this.fx.draw(ctx);
     this.fx.drawTexts(ctx);
 

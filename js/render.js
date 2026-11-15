@@ -62,7 +62,7 @@
   }
 
   // ================= 粒子 =================
-  function Particles() { this.list = []; this.texts = []; this.bursts = []; }
+  function Particles() { this.list = []; this.texts = []; this.bursts = []; this.marks = []; }
 
   Particles.prototype.add = function (p) { if (this.list.length < 900) this.list.push(p); };
 
@@ -137,8 +137,14 @@
     }
     t.length = j;
     var b = this.bursts; j = 0;
-    for (i = 0; i < b.length; i++) { if (--b[i].life > 0) b[j++] = b[i]; }
+    for (i = 0; i < b.length; i++) {
+      if (b[i].delay > 0) { b[i].delay--; b[j++] = b[i]; continue; }   // 还没轮到它响
+      if (--b[i].life > 0) b[j++] = b[i];
+    }
     b.length = j;
+    var m = this.marks; j = 0;
+    for (i = 0; i < m.length; i++) { if (--m[i].life > 0) m[j++] = m[i]; }
+    m.length = j;
   };
 
   Particles.prototype.draw = function (ctx) {
@@ -167,6 +173,7 @@
     var b = this.bursts;
     for (i = 0; i < b.length; i++) {
       var o = b[i], age = o.max - o.life;
+      if (o.delay > 0) continue;
       var sc = age < 4 ? 0.55 + age * 0.17 : 1.15 * (o.life / (o.max - 4));
       r = o.r * 1.15 * Math.max(0.05, sc);
       star(ctx, o.x, o.y, r, r * 0.62, o.n, o.rot); ink(ctx, o.c1, 3);
@@ -181,6 +188,17 @@
       if (p.kind === 'puff') {
         ctx.fillStyle = p.c;
         disc(ctx, p.x, p.y, p.size * k); ctx.fill();
+        continue;
+      }
+      if (p.kind === 'drop') {                         // 往下滴的一滴：带墨线的小圆
+        disc(ctx, p.x, p.y, p.size * k + 1.5); ctx.fillStyle = INK; ctx.fill();
+        disc(ctx, p.x, p.y, p.size * k); ctx.fillStyle = p.c; ctx.fill();
+        continue;
+      }
+      if (p.kind === 'bubble') {                       // 往上冒的泡：空心
+        disc(ctx, p.x, p.y, p.size * k);
+        ctx.lineWidth = 4; ctx.strokeStyle = INK; ctx.stroke();
+        ctx.lineWidth = 1.8; ctx.strokeStyle = p.c; ctx.stroke();
         continue;
       }
       var s = p.size * k;
@@ -671,23 +689,615 @@
     ctx.restore();
   };
 
-  /** 弹体：一串越来越小的尾迹点 + 带火尾的弹头 */
-  RZ.drawProjectile = function (ctx, p, t) {
-    var s = p.w.shell, tr = p.trail;
-    if (tr && tr.length > 3) {
-      ctx.fillStyle = s.trail;
-      var n = tr.length / 2;
-      for (var i = 0; i < n; i += 2) {
-        disc(ctx, tr[i * 2], tr[i * 2 + 1], 1 + 3 * (i / n)); ctx.fill();
+  // ================= 武器的样子 =================
+  // 每把武器在 data.js 里有一个 look。这里按 look 决定三件事：
+  //   SHOTS[look]  弹体长什么样（画在以弹体为原点的坐标里）
+  //   PRE[look]    弹体身后拖着什么（光束、丝线、电弧——画在世界坐标里，用 p.trail）
+  //   Particles.trail / boom  飞行时掉什么渣、落地时炸成什么样
+  // 目标是「看一眼就知道是谁打的、打的是什么」：激光是一道光，毒液是一坨会滴的黏液，
+  // 龙蛋落地是一摊蛋黄，蛛网落地真的结一张网。
+  var SHOTS = {}, PRE = {};
+
+  function vel(p) { return Math.atan2(p.vy, p.vx); }
+  function sizeOf(w) { return Math.max(1.05, Math.min(1.8, 1.0 + (w.radius || 40) / 130)); }
+  /** 弹尾的火：朝 -x 方向喷 */
+  function tailFlame(ctx, x, h, len, t) {
+    var f = 0.78 + 0.22 * Math.sin(t * 0.05);
+    poly(ctx, [x, -h, x - len * f, 0, x, h]); ink(ctx, RED, 2);
+    poly(ctx, [x, -h * 0.55, x - len * 0.55 * f, 0, x, h * 0.55]); ctx.fillStyle = YELLOW; ctx.fill();
+  }
+  /** 一团火的轮廓：头圆尾尖，尾巴上有几撮火舌 */
+  function fireShape(ctx, r, len, t) {
+    var a = Math.sin(t * 0.06) * r * 0.25, b = Math.cos(t * 0.045) * r * 0.25;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.quadraticCurveTo(r, -r, -r * 0.2, -r);
+    ctx.lineTo(-len * 0.55, -r * 0.75 + a); ctx.lineTo(-len * 0.45, -r * 0.25);
+    ctx.lineTo(-len, b); ctx.lineTo(-len * 0.45, r * 0.3);
+    ctx.lineTo(-len * 0.6, r * 0.8 - a); ctx.lineTo(-r * 0.2, r);
+    ctx.quadraticCurveTo(r, r, r, 0);
+    ctx.closePath();
+  }
+  /** 沿 p.trail 最近 n 个点（加上弹体当前位置）走一条折线 */
+  function trailPath(ctx, p, n) {
+    var tr = p.trail, len = tr.length / 2, from = Math.max(0, len - n);
+    ctx.beginPath();
+    if (from >= len) { ctx.moveTo(p.x - p.vx * 2, p.y - p.vy * 2); }
+    else {
+      ctx.moveTo(tr[from * 2], tr[from * 2 + 1]);
+      for (var i = from + 1; i < len; i++) ctx.lineTo(tr[i * 2], tr[i * 2 + 1]);
+    }
+    ctx.lineTo(p.x, p.y);
+  }
+  /** 一道锯齿电弧，从 (x0,y0) 到 (x1,y1)，每次调用形状都不一样——所以会闪 */
+  function zig(ctx, x0, y0, x1, y1, amp, steps) {
+    var dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L, side = 1;
+    ctx.moveTo(x0, y0);
+    for (var i = 1; i < steps; i++) {
+      var k = i / steps; side = -side;
+      var off = side * amp * (0.5 + Math.random() * 0.5);
+      ctx.lineTo(x0 + dx * k + nx * off, y0 + dy * k + ny * off);
+    }
+    ctx.lineTo(x1, y1);
+  }
+  /** 先粗墨线、再细一点的颜色：给「线」类的东西描边 */
+  function inkLine(ctx, color, w) {
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.lineWidth = w + 4; ctx.strokeStyle = INK; ctx.stroke();
+    ctx.lineWidth = w; ctx.strokeStyle = color; ctx.stroke();
+  }
+
+  // ---- 烈火：火药 ----
+  SHOTS.shell = function (ctx, p, t, s, k) {              // 烈火弹：拖着火的黑铁炮弹
+    ctx.rotate(vel(p));
+    tailFlame(ctx, -4 * k, 5 * k, 17 * k, t + p.age * 40);
+    disc(ctx, 0, 0, 6.5 * k); ink(ctx, '#3a2c22', 2.2);
+    ctx.beginPath(); ctx.arc(-1 * k, -1.5 * k, 3 * k, 3.5, 4.9); ctx.lineWidth = 1.8; ctx.strokeStyle = PAPER; ctx.stroke();
+  };
+  SHOTS.cracker = function (ctx, p, t, s, k) {            // 三连爆：三根翻着跟头的大炮仗
+    ctx.rotate(p.age * 0.33);
+    roundRect(ctx, -8 * k, -4 * k, 16 * k, 8 * k, 1.5); ink(ctx, RED, 2.2);
+    ctx.fillStyle = YELLOW; ctx.fillRect(-5.5 * k, -4 * k, 2.4 * k, 8 * k); ctx.fillRect(3 * k, -4 * k, 2.4 * k, 8 * k);
+    ctx.beginPath(); ctx.moveTo(8 * k, 0); ctx.quadraticCurveTo(12 * k, -4 * k, 14 * k, -1 * k); ctx.lineWidth = 1.8; ctx.strokeStyle = INK; ctx.stroke();
+    star(ctx, 14.5 * k, -1 * k, 4.5 * k, 1.8 * k, 5, t * 0.03); ink(ctx, PAPER, 1.5);
+  };
+  SHOTS.meteor = function (ctx, p, t, s, k) {             // 焦土怒射：一整团烧着的火球
+    ctx.rotate(vel(p));
+    fireShape(ctx, 10 * k, 34 * k, t + p.age * 30); ink(ctx, RED, 3);
+    fireShape(ctx, 6.5 * k, 20 * k, t * 1.3 + p.age * 30); ctx.fillStyle = YELLOW; ctx.fill();
+    disc(ctx, 1.5 * k, 0, 3.5 * k); ctx.fillStyle = PAPER; ctx.fill();
+  };
+
+  // ---- 红龙：龙焰 ----
+  SHOTS.dragonfire = function (ctx, p, t, s, k) {         // 龙焰弹：一口吐出来的火
+    ctx.rotate(vel(p));
+    fireShape(ctx, 6.5 * k, 22 * k, t + p.age * 30); ink(ctx, '#e2432a', 2.5);
+    fireShape(ctx, 3.8 * k, 12 * k, t * 1.4); ctx.fillStyle = YELLOW; ctx.fill();
+  };
+  SHOTS.dragonhead = function (ctx, p, t, s, k) {         // 双头龙：两颗追着人咬的龙头，后面甩着身子
+    ctx.rotate(vel(p));
+    for (var i = 3; i >= 1; i--) {
+      disc(ctx, -6 * k - i * 6.5 * k, Math.sin(t * 0.03 + i * 1.3 + p.age * 0.2) * 3.5 * k, (5 - i) * k); ink(ctx, i % 2 ? '#a5230e' : RED, 2);
+    }
+    poly(ctx, [-6 * k, -6 * k, -11 * k, -11 * k, -2 * k, -6.5 * k]); ink(ctx, YELLOW, 1.8);      // 角
+    poly(ctx, [11 * k, -1 * k, 4 * k, -6.5 * k, -6 * k, -6.5 * k, -9 * k, 0, -6 * k, 6 * k, 4 * k, 6 * k, 9 * k, 2.5 * k, 4 * k, 1.5 * k]);
+    ink(ctx, RED, 2.2);
+    disc(ctx, 1.5 * k, -3 * k, 2 * k); ink(ctx, PAPER, 1.4);
+    disc(ctx, 2.2 * k, -3 * k, 0.9 * k); ctx.fillStyle = INK; ctx.fill();
+    poly(ctx, [7.5 * k, 1.8 * k, 6 * k, 4.4 * k, 5 * k, 1.8 * k]); ctx.fillStyle = PAPER; ctx.fill();   // 牙
+  };
+  PRE.breath = function (ctx, p, t, s, k) {               // 灭世龙息：一路烧过去的火带
+    trailPath(ctx, p, 13); inkLine(ctx, RED, 13 * k);
+    trailPath(ctx, p, 8); ctx.lineWidth = 6 * k; ctx.strokeStyle = YELLOW; ctx.stroke();
+  };
+  SHOTS.breath = function (ctx, p, t, s, k) {
+    ctx.rotate(vel(p));
+    fireShape(ctx, 12 * k, 30 * k, t + p.age * 30); ink(ctx, RED, 3);
+    fireShape(ctx, 8 * k, 18 * k, t * 1.3); ctx.fillStyle = YELLOW; ctx.fill();
+    fireShape(ctx, 4 * k, 9 * k, t * 1.7); ctx.fillStyle = PAPER; ctx.fill();
+  };
+
+  // ---- 铁金刚：钢铁 ----
+  SHOTS.fist = function (ctx, p, t, s, k) {               // 铁拳弹：飞出去的一只铁拳头
+    ctx.rotate(vel(p));
+    tailFlame(ctx, -11 * k, 3.5 * k, 12 * k, t + p.age * 40);
+    roundRect(ctx, -12 * k, -4.5 * k, 8 * k, 9 * k, 1.5); ink(ctx, '#5b7fa6', 2.2);              // 袖口
+    roundRect(ctx, -5 * k, -6.5 * k, 13 * k, 13 * k, 3.5 * k); ink(ctx, '#e8edf2', 2.4);         // 拳
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    for (var i = -1; i <= 1; i++) { ctx.moveTo(4 * k, i * 3.6 * k - 1.2 * k); ctx.lineTo(8 * k, i * 3.6 * k - 1.2 * k); }
+    ctx.stroke();
+    roundRect(ctx, -3 * k, 3 * k, 7 * k, 5 * k, 2); ink(ctx, '#c3d1de', 1.8);                    // 拇指
+  };
+  function hammer(ctx, k, head, big) {
+    roundRect(ctx, -10 * k, -1.8 * k, 17 * k, 3.6 * k, 1); ink(ctx, '#b78b4f', 2);
+    roundRect(ctx, 4 * k, -7.5 * k, (big ? 11 : 9) * k, 15 * k, 2); ink(ctx, head, 2.4);
+    ctx.fillStyle = INK; ctx.fillRect(4 * k, -2.6 * k, (big ? 11 : 9) * k, 1.5);
+    ctx.fillRect(4 * k, 1.4 * k, (big ? 11 : 9) * k, 1.5);
+  }
+  SHOTS.hammer = function (ctx, p, t, s, k) {             // 跳弹锤：打着旋的锤子
+    ctx.rotate(p.age * 0.42 * (p.vx < 0 ? -1 : 1));
+    hammer(ctx, k, '#c3d1de', false);
+  };
+  SHOTS.thunderhammer = function (ctx, p, t, s, k) {      // 电击锤：带电的大锤
+    ctx.save();
+    ctx.rotate(p.age * 0.3 * (p.vx < 0 ? -1 : 1));
+    hammer(ctx, k * 1.25, YELLOW, true);
+    ctx.restore();
+    ctx.beginPath();
+    for (var i = 0; i < 3; i++) {
+      var a = Math.random() * TAU, r0 = 9 * k, r1 = 20 * k;
+      zig(ctx, Math.cos(a) * r0, Math.sin(a) * r0, Math.cos(a + 0.5) * r1, Math.sin(a + 0.5) * r1, 4 * k, 4);
+    }
+    inkLine(ctx, PAPER, 2);
+  };
+
+  // ---- 贝贝龙：蛋 ----
+  SHOTS.egg = function (ctx, p, t, s, k) {                // 龙蛋：带斑点、翻着滚
+    ctx.rotate(p.age * 0.16);
+    oval(ctx, 0, 0, 5.6 * k, 7.4 * k); ink(ctx, PAPER, 2.2);
+    ctx.fillStyle = '#f2a0c0';
+    disc(ctx, -1.8 * k, -2.6 * k, 1.6 * k); ctx.fill();
+    disc(ctx, 2 * k, 0.6 * k, 1.9 * k); ctx.fill();
+    disc(ctx, -1.2 * k, 3.6 * k, 1.3 * k); ctx.fill();
+  };
+  SHOTS.goldegg = function (ctx, p, t, s, k) {            // 万蛋齐发：领头的大金蛋
+    ctx.rotate(p.age * 0.12);
+    oval(ctx, 0, 0, 7.5 * k, 10 * k); ink(ctx, YELLOW, 2.6);
+    ctx.save();
+    oval(ctx, 0, 0, 7.5 * k, 10 * k); ctx.clip();
+    ctx.fillStyle = RED; ctx.fillRect(-9 * k, -2 * k, 18 * k, 4 * k);
+    ctx.restore();
+    ctx.beginPath(); ctx.arc(-1.5 * k, -3 * k, 4.5 * k, 3.5, 4.8); ctx.lineWidth = 2; ctx.strokeStyle = PAPER; ctx.stroke();
+  };
+
+  // ---- 毒蜘蛛：毒与丝 ----
+  SHOTS.venom = function (ctx, p, t, s, k) {              // 毒液弹：一坨会晃的黏液
+    ctx.beginPath();
+    for (var i = 0; i <= 10; i++) {
+      var a = i / 10 * TAU, r = 6.8 * k * (1 + 0.2 * Math.sin(t * 0.02 + i * 1.9 + p.age * 0.3));
+      if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r); else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    ctx.closePath(); ink(ctx, '#8fd13f', 2.4);
+    disc(ctx, -2 * k, -2 * k, 1.8 * k); ctx.fillStyle = PAPER; ctx.fill();
+    disc(ctx, 2 * k, 1.5 * k, 1.2 * k); ctx.fillStyle = '#3f7f1f'; ctx.fill();
+  };
+  SHOTS.spit = function (ctx, p, t, s, k) {               // 腐蚀三射：三根细长的毒针
+    ctx.rotate(vel(p));
+    poly(ctx, [11 * k, 0, 0, -3.2 * k, -10 * k, 0, 0, 3.2 * k]); ink(ctx, '#8fd13f', 2);
+    ctx.beginPath(); ctx.moveTo(-6 * k, 0); ctx.lineTo(7 * k, 0); ctx.lineWidth = 1.5; ctx.strokeStyle = PAPER; ctx.stroke();
+  };
+  PRE.web = function (ctx, p, t, s, k) {                  // 剧毒之网：丝球后面一直连着一根丝
+    trailPath(ctx, p, 60); inkLine(ctx, PAPER, 1.6);
+  };
+  SHOTS.web = function (ctx, p, t, s, k) {
+    ctx.rotate(p.age * 0.1);
+    disc(ctx, 0, 0, 8 * k); ink(ctx, PAPER, 2.4);
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    for (var i = 0; i < 3; i++) { ctx.moveTo(-8 * k, (i - 1) * 4 * k); ctx.quadraticCurveTo(0, (i - 1) * 4 * k + 3 * k, 8 * k, (i - 1) * 4 * k); }
+    ctx.moveTo(-3 * k, -7 * k); ctx.lineTo(-3 * k, 7 * k); ctx.moveTo(3 * k, -7 * k); ctx.lineTo(3 * k, 7 * k);
+    ctx.stroke();
+  };
+
+  // ---- 旋风：风 ----
+  function swirl(ctx, k, rot, arms, r) {
+    ctx.beginPath();
+    for (var j = 0; j < arms; j++) {
+      for (var i = 0; i <= 8; i++) {
+        var u = i / 8, a = rot + j * TAU / arms + u * 3.4, rr = (1.5 + u * r) * k;
+        if (i === 0) ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); else ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
       }
     }
+  }
+  SHOTS.cyclone = function (ctx, p, t, s, k) {            // 气旋弹：一团转个不停的风
+    swirl(ctx, k, -t * 0.02, 3, 9); inkLine(ctx, '#dff6ff', 2.6);
+  };
+  SHOTS.drill = function (ctx, p, t, s, k) {              // 穿地钻：一枚带螺纹的钻头
+    ctx.rotate(vel(p));
+    roundRect(ctx, -11 * k, -5 * k, 6 * k, 10 * k, 1.5); ink(ctx, '#1d6b7d', 2);
+    poly(ctx, [13 * k, 0, -5 * k, -6.5 * k, -5 * k, 6.5 * k]); ink(ctx, '#c3d1de', 2.4);
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    for (var i = 0; i < 4; i++) {
+      var x = -4 * k + ((i * 4.5 + p.age * 1.2) % 18) * k, h = (13 * k - x) / (18 * k) * 6.5 * k;
+      ctx.moveTo(x, -h); ctx.lineTo(x + 2.5 * k, h);
+    }
+    ctx.stroke();
+  };
+  function funnel(ctx, k, t, h, top, seed) {
+    for (var i = 0; i < 5; i++) {
+      var u = i / 4, rx = (top * (1 - u) + 1.6 * u) * k;
+      oval(ctx, Math.sin(t * 0.025 + i * 0.9 + seed) * 2.2 * k * (1 - u * 0.4), (-h / 2 + u * h) * k, rx, Math.max(1.6, rx * 0.42));
+      ink(ctx, i % 2 ? '#a8e6ff' : '#dff6ff', 2);
+    }
+  }
+  SHOTS.tornado = function (ctx, p, t, s, k) {            // 龙卷风暴：四个歪歪扭扭的小龙卷
+    funnel(ctx, k, t, 20, 9, p.vx * 3);
+  };
+
+  // ---- 托尔：雷 ----
+  PRE.spark = PRE.storm = PRE.dart = function (ctx, p, t, s, k) {   // 身后是一截乱跳的电弧
+    var tr = p.trail, n = tr.length / 2;
+    if (n < 2) return;
+    var from = Math.max(0, n - 5);
+    ctx.beginPath();
+    zig(ctx, tr[from * 2], tr[from * 2 + 1], p.x, p.y, 7 * k, 7);
+    inkLine(ctx, YELLOW, 2.6);
+  };
+  SHOTS.spark = function (ctx, p, t, s, k) {              // 雷霆弹：一颗球状闪电
+    star(ctx, 0, 0, 9.5 * k, 4 * k, 7, Math.random() * TAU); ink(ctx, YELLOW, 2.2);
+    star(ctx, 0, 0, 5 * k, 2.2 * k, 5, Math.random() * TAU); ctx.fillStyle = PAPER; ctx.fill();
+  };
+  SHOTS.storm = function (ctx, p, t, s, k) {              // 神罚之雷：外面套着一圈电环的雷球
+    ctx.save(); ctx.rotate(t * 0.006);
+    ctx.beginPath(); ctx.ellipse(0, 0, 15 * k, 6 * k, 0, 0, TAU); inkLine(ctx, '#8fb8ff', 2);
+    ctx.restore();
+    SHOTS.spark(ctx, p, t, s, k * 1.15);
+    ctx.save(); ctx.rotate(-t * 0.008);
+    ctx.beginPath(); ctx.ellipse(0, 0, 6 * k, 15 * k, 0, -0.6, 0.6); inkLine(ctx, PAPER, 1.6);
+    ctx.restore();
+  };
+  SHOTS.dart = function (ctx, p, t, s, k) {               // 裂空雷的子弹：一支闪电形的标枪
+    ctx.rotate(vel(p));
+    poly(ctx, [12 * k, 0, 2 * k, -5 * k, 3 * k, -1.2 * k, -11 * k, -3.5 * k, -2 * k, 2.5 * k, -3 * k, -0.5 * k]);
+    ink(ctx, YELLOW, 2.2);
+  };
+
+  // ---- 赤焰：燃油 ----
+  SHOTS.oilcan = function (ctx, p, t, s, k) {             // 燃油弹：一只翻滚的油壶
+    ctx.rotate(p.age * 0.2);
+    roundRect(ctx, 1 * k, -11 * k, 4.5 * k, 5 * k, 1); ink(ctx, YELLOW, 1.8);
+    roundRect(ctx, -6.5 * k, -7.5 * k, 13 * k, 15 * k, 2); ink(ctx, '#e2432a', 2.4);
+    ctx.strokeStyle = INK; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(-4 * k, -4.5 * k); ctx.lineTo(4 * k, 4.5 * k); ctx.moveTo(4 * k, -4.5 * k); ctx.lineTo(-4 * k, 4.5 * k); ctx.stroke();
+  };
+  SHOTS.ember = function (ctx, p, t, s, k) {              // 四散火种：几簇小火苗
+    ctx.rotate(vel(p));
+    fireShape(ctx, 4.6 * k, 14 * k, t + p.age * 50 + p.vx * 20); ink(ctx, '#f08a2c', 2);
+    disc(ctx, 0.5 * k, 0, 2.2 * k); ctx.fillStyle = PAPER; ctx.fill();
+  };
+  SHOTS.napalm = function (ctx, p, t, s, k) {             // 烈焰地毯：一整桶烧着的油
+    ctx.rotate(vel(p));
+    tailFlame(ctx, -8 * k, 7 * k, 24 * k, t + p.age * 40);
+    roundRect(ctx, -9 * k, -7 * k, 18 * k, 14 * k, 2.5); ink(ctx, '#e2432a', 2.6);
+    ctx.fillStyle = INK; ctx.fillRect(-3.6 * k, -7 * k, 1.6, 14 * k); ctx.fillRect(3 * k, -7 * k, 1.6, 14 * k);
+    poly(ctx, [0.2 * k, -3.6 * k, -2.6 * k, 2.6 * k, 3 * k, 2.6 * k]); ctx.fillStyle = YELLOW; ctx.fill();
+  };
+
+  // ---- 兰登：光 ----
+  // 激光没有「弹体」：它就是一道光。光束沿着飞过的轨迹画，墨线里包着紫，紫里包着一道纸色的芯。
+  PRE.beam = function (ctx, p, t, s, k) {                 // 能量束：一截飞行的光
+    trailPath(ctx, p, 10); inkLine(ctx, '#9b5cff', 6 * k);
+    trailPath(ctx, p, 10); ctx.lineWidth = 2.2 * k; ctx.strokeStyle = PAPER; ctx.stroke();
+  };
+  SHOTS.beam = function (ctx, p, t, s, k) {
+    star(ctx, 0, 0, 10 * k, 2.4 * k, 4, vel(p)); ink(ctx, PAPER, 2);
+  };
+  PRE.lance = function (ctx, p, t, s, k) {                // 双子光矛：矛后留一道残影
+    trailPath(ctx, p, 3); ctx.lineWidth = 3 * k; ctx.lineCap = 'round'; ctx.strokeStyle = '#c39bff'; ctx.stroke();
+  };
+  SHOTS.lance = function (ctx, p, t, s, k) {
+    ctx.rotate(vel(p));
+    poly(ctx, [20 * k, 0, 2 * k, -4 * k, -16 * k, 0, 2 * k, 4 * k]); ink(ctx, '#c39bff', 2.2);
+    poly(ctx, [15 * k, 0, 2 * k, -1.5 * k, -10 * k, 0, 2 * k, 1.5 * k]); ctx.fillStyle = PAPER; ctx.fill();
+  };
+  PRE.rail = function (ctx, p, t, s, k) {                 // 轨道炮：整条弹道都亮着，上面套着一串环
+    trailPath(ctx, p, 60); inkLine(ctx, '#9b5cff', 9 * k);
+    trailPath(ctx, p, 60); ctx.lineWidth = 3.5 * k; ctx.strokeStyle = PAPER; ctx.stroke();
+    var tr = p.trail, n = tr.length / 2;
+    for (var i = n - 3; i > 1; i -= 5) {
+      var a = Math.atan2(tr[i * 2 + 1] - tr[i * 2 - 1], tr[i * 2] - tr[i * 2 - 2]);
+      ctx.beginPath(); ctx.ellipse(tr[i * 2], tr[i * 2 + 1], 4 * k, 11 * k, a, 0, TAU); inkLine(ctx, PAPER, 1.8);
+    }
+  };
+  SHOTS.rail = function (ctx, p, t, s, k) {
+    star(ctx, 0, 0, 20 * k, 4 * k, 4, vel(p)); ink(ctx, PAPER, 2.4);
+    star(ctx, 0, 0, 11 * k, 3 * k, 4, vel(p) + 0.785); ink(ctx, '#c39bff', 2);
+  };
+
+  // ---- 奥丁：重炮与陨石 ----
+  SHOTS.mortar = SHOTS.bomblet = function (ctx, p, t, s, k) {   // 重迫击：带尾翼的胖炸弹
+    ctx.rotate(vel(p));
+    poly(ctx, [-8 * k, 0, -15 * k, -7 * k, -11 * k, -7 * k, -6 * k, -3 * k]); ink(ctx, '#c9a227', 2);
+    poly(ctx, [-8 * k, 0, -15 * k, 7 * k, -11 * k, 7 * k, -6 * k, 3 * k]); ink(ctx, '#c9a227', 2);
+    oval(ctx, 0, 0, 10 * k, 6.5 * k); ink(ctx, '#6b6b3a', 2.4);
+    ctx.save(); oval(ctx, 0, 0, 10 * k, 6.5 * k); ctx.clip();
+    ctx.fillStyle = '#3a2c22'; ctx.fillRect(5 * k, -8 * k, 8 * k, 16 * k);
+    ctx.fillStyle = YELLOW; ctx.fillRect(-1.5 * k, -8 * k, 2.4 * k, 16 * k);
+    ctx.restore();
+  };
+  SHOTS.rock = function (ctx, p, t, s, k) {               // 陨石审判：刻着符文、拖着火的石头
+    ctx.save(); ctx.rotate(vel(p));
+    tailFlame(ctx, -5 * k, 8 * k, 30 * k, t + p.age * 40);
+    ctx.restore();
+    ctx.rotate(p.age * 0.07);
+    poly(ctx, [10 * k, -2 * k, 5 * k, -9 * k, -4 * k, -10 * k, -10 * k, -3 * k, -8 * k, 6 * k, 0, 10 * k, 8 * k, 6 * k]);
+    ink(ctx, '#8f6f4a', 2.6);
+    poly(ctx, [-8 * k, 6 * k, 0, 10 * k, 8 * k, 6 * k, 2 * k, 4 * k, -4 * k, 5 * k]); ctx.fillStyle = '#5c4630'; ctx.fill();
+    ctx.strokeStyle = YELLOW; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-3 * k, -6 * k); ctx.lineTo(-3 * k, 2 * k); ctx.moveTo(-3 * k, -5 * k); ctx.lineTo(3 * k, -2 * k); ctx.lineTo(-3 * k, 0); ctx.stroke();
+  };
+
+  // ---- 道具弹 ----
+  SHOTS.beacon = function (ctx, p, t, s, k) {             // 定位炮：一枚一闪一闪的信标
+    ctx.rotate(vel(p));
+    poly(ctx, [11 * k, 0, 0, -5 * k, -9 * k, -5 * k, -6 * k, 0, -9 * k, 5 * k, 0, 5 * k]); ink(ctx, '#2fd0ff', 2.2);
+    disc(ctx, 1 * k, 0, 2.6 * k); ink(ctx, ((t / 120) | 0) % 2 ? PAPER : YELLOW, 1.5);
+  };
+  SHOTS.orb = function (ctx, p, t, s, k) {                // 麻痹弹：套着环的紫球
+    disc(ctx, 0, 0, 6.5 * k); ink(ctx, '#a86bff', 2.4);
+    ctx.save(); ctx.rotate(t * 0.01);
+    ctx.beginPath(); ctx.ellipse(0, 0, 12 * k, 4 * k, 0, 0, TAU); inkLine(ctx, PAPER, 1.6);
+    ctx.restore();
+  };
+
+  /** 弹体：先画它身后拖着的东西，再画它自己 */
+  RZ.drawProjectile = function (ctx, p, t) {
+    var w = p.w, s = w.shell, look = SHOTS[w.look] ? w.look : 'shell', k = sizeOf(w);
     ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(Math.atan2(p.vy, p.vx));
     ctx.lineJoin = 'round';
-    var f = 0.8 + 0.2 * Math.sin(t * 0.05 + p.age);
-    poly(ctx, [-s.r * 0.6, -s.r * 0.9, -s.r * 3.4 * f, 0, -s.r * 0.6, s.r * 0.9]); ink(ctx, s.glow, 2);
-    oval(ctx, 0, 0, s.r * 1.5, s.r); ink(ctx, s.color, 2.2);
+    if (PRE[look]) PRE[look](ctx, p, t, s, k);
+    ctx.translate(p.x, p.y);
+    SHOTS[look](ctx, p, t, s, k);
+    ctx.restore();
+  };
+
+  // ================= 飞行时掉的渣 =================
+  var TRAILS = {
+    smoke: function (fx, p) { if ((p.age & 3) === 0) fx.add({ x: p.x, y: p.y, vx: 0, vy: -0.15, life: 20, max: 20, size: 4.5, c: '#cbb994', grav: -0.004, kind: 'puff' }); },
+    ember: function (fx, p) {
+      if (p.age & 1) return;
+      fx.add({ x: p.x, y: p.y, vx: (Math.random() - 0.5) * 1.2, vy: (Math.random() - 0.5) * 1.2, life: 16, max: 16, size: 4, c: Math.random() < 0.5 ? YELLOW : '#f08a2c', grav: 0.03, kind: 'chip', rot: Math.random() * TAU });
+    },
+    drip: function (fx, p, color) {
+      if ((p.age % 3) !== 0) return;
+      fx.add({ x: p.x, y: p.y + 3, vx: p.vx * 0.15, vy: 0.6, life: 22, max: 22, size: 3.4, c: color, grav: 0.16, kind: 'drop' });
+    },
+    gust: function (fx, p) { if ((p.age & 3) === 0) fx.add({ x: p.x, y: p.y, vx: -p.vx * 0.1, vy: -p.vy * 0.1, life: 14, max: 14, size: 5, c: '#dff6ff', grav: 0, kind: 'puff' }); }
+  };
+  var TRAIL_OF = {
+    shell: 'smoke', cracker: 'smoke', fist: 'smoke', mortar: 'smoke', bomblet: 'smoke', beacon: 'smoke',
+    meteor: 'ember', dragonfire: 'ember', dragonhead: 'ember', breath: 'ember', ember: 'ember', napalm: 'ember', rock: 'ember',
+    venom: 'drip', spit: 'drip', oilcan: 'drip',
+    cyclone: 'gust', tornado: 'gust'
+  };
+  Particles.prototype.trail = function (p) {
+    var kind = TRAIL_OF[p.w.look || 'shell'];
+    if (!kind) return;                                  // 蛋、锤子、光束、电弧：干干净净，什么都不掉
+    TRAILS[kind](this, p, p.w.look === 'oilcan' ? INK : '#8fd13f');
+  };
+
+  // ================= 落地 =================
+  /** 留在场上一小会儿的效果：蛛网、地上的火、龙卷、光环…… */
+  Particles.prototype.mark = function (m) {
+    m.max = m.life;
+    this.marks.push(m);
+    if (this.marks.length > 40) this.marks.shift();
+  };
+  function chips(fx, x, y, n, speed, colors, size) {
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * TAU, sp = speed * (0.4 + Math.random() * 0.6);
+      fx.add({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 1, life: 20 + Math.random() * 20, max: 40,
+        size: size * (0.6 + Math.random() * 0.6), c: colors[(Math.random() * colors.length) | 0], grav: 0.14, kind: 'chip', rot: Math.random() * TAU });
+    }
+  }
+  function smoke(fx, x, y, r, n, color) {
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * TAU, d = Math.random() * r * 0.45;
+      fx.add({ x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, vx: Math.cos(a) * 0.5, vy: Math.sin(a) * 0.4 - 0.7,
+        life: 30 + Math.random() * 26, max: 56, size: r * (0.2 + Math.random() * 0.2), c: i % 3 ? color : PAPER, grav: -0.012, kind: 'smoke' });
+    }
+  }
+  /** 沿弹坑下半圈摆一排火苗的位置 */
+  function rimFire(x, y, r, n) {
+    var pts = [];
+    for (var i = 0; i < n; i++) {
+      var a = 0.25 + (i + Math.random() * 0.6) / n * (Math.PI - 0.5);
+      pts.push(x + Math.cos(a) * r * 1.02, y + Math.sin(a) * r * 1.02, 0.6 + Math.random() * 0.7, Math.random() * TAU);
+    }
+    return pts;
+  }
+
+  var BOOMS = {
+    fire: function (fx, x, y, r, s) { fx.burst(x, y, r, [s.color, s.glow, PAPER, s.trail]); },
+    crackers: function (fx, x, y, r) {                  // 三连爆：连着三声，一地红纸屑
+      for (var i = 0; i < 3; i++) {
+        var a = Math.random() * TAU, d = i ? r * 0.5 : 0;
+        fx.bursts.push({ x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, r: r * (i ? 0.6 : 0.9), life: 14, max: 14, delay: i * 5, rot: Math.random() * TAU, n: 8, c1: RED, c2: YELLOW });
+      }
+      chips(fx, x, y, 16, r * 0.14, [RED, RED, YELLOW, PAPER], 5);
+      smoke(fx, x, y, r, 5, '#cbb994');
+    },
+    flame: function (fx, x, y, r) {                     // 龙焰：一朵火开出来
+      fx.mark({ type: 'flower', x: x, y: y, r: r, life: 22, seed: Math.random() * TAU });
+      fx.mark({ type: 'fire', x: x, y: y, r: r, life: 70, pts: rimFire(x, y, r, 5) });
+      chips(fx, x, y, 8, r * 0.12, [YELLOW, '#f08a2c'], 4);
+    },
+    inferno: function (fx, x, y, r) {                   // 必杀级的火：大火花 + 烧很久的一圈
+      fx.burst(x, y, r, [YELLOW, RED, PAPER, '#f08a2c']);
+      fx.mark({ type: 'flower', x: x, y: y, r: r * 0.9, life: 26, seed: Math.random() * TAU });
+      fx.mark({ type: 'fire', x: x, y: y, r: r, life: 130, pts: rimFire(x, y, r, 9), tall: 1.5 });
+    },
+    groundfire: function (fx, x, y, r) {                // 燃油：炸得不大，但地上一直烧
+      fx.bursts.push({ x: x, y: y, r: r * 0.7, life: 14, max: 14, rot: Math.random() * TAU, n: 8, c1: RED, c2: YELLOW });
+      fx.mark({ type: 'fire', x: x, y: y, r: r, life: 120, pts: rimFire(x, y, r, 7), tall: 1.2 });
+      chips(fx, x, y, 8, r * 0.1, [INK, '#3a2c22', YELLOW], 4);
+      smoke(fx, x, y, r, 5, '#4a392c');
+    },
+    steel: function (fx, x, y, r) {                     // 钢铁：一记「砰」，溅出铁屑，没有火
+      fx.mark({ type: 'pow', x: x, y: y, r: r, life: 15, seed: Math.random() * TAU });
+      fx.mark({ type: 'ring', x: x, y: y, r: r, life: 16, c: '#c3d1de' });
+      chips(fx, x, y, 14, r * 0.16, ['#e8edf2', '#9fb3c8', '#5b7fa6'], 4.5);
+    },
+    yolk: function (fx, x, y, r) {                      // 蛋：一摊蛋清蛋黄，碎壳乱飞
+      fx.mark({ type: 'splat', x: x, y: y, r: r, life: 44, seed: Math.random() * TAU, c: PAPER, c2: YELLOW });
+      chips(fx, x, y, 12, r * 0.15, [PAPER, PAPER, '#f2a0c0'], 5);
+    },
+    venom: function (fx, x, y, r) {                     // 毒：溅开一摊，冒着泡
+      fx.mark({ type: 'splat', x: x, y: y, r: r, life: 50, seed: Math.random() * TAU, c: '#8fd13f', c2: '#3f7f1f' });
+      for (var i = 0; i < 9; i++) {
+        fx.add({ x: x + (Math.random() - 0.5) * r * 1.2, y: y + (Math.random() - 0.3) * r * 0.6, vx: 0, vy: -0.5 - Math.random() * 0.8,
+          life: 26 + Math.random() * 30, max: 56, size: 3 + Math.random() * 4, c: '#c8ff7a', grav: -0.01, kind: 'bubble' });
+      }
+    },
+    web: function (fx, x, y, r) {                       // 剧毒之网：真的结一张网
+      fx.mark({ type: 'web', x: x, y: y, r: r, life: 120, seed: Math.random() * TAU });
+      BOOMS.venom(fx, x, y, r * 0.5);
+    },
+    whirl: function (fx, x, y, r) {                     // 气旋：一圈圈卷开的风，带起尘土
+      fx.mark({ type: 'whirl', x: x, y: y, r: r, life: 26, seed: Math.random() * TAU });
+      smoke(fx, x, y, r, 4, '#dff6ff');
+    },
+    tornado: function (fx, x, y, r) {                   // 龙卷：落点立起一根龙卷
+      fx.mark({ type: 'twister', x: x, y: y, r: r, life: 56, seed: Math.random() * TAU });
+      fx.mark({ type: 'whirl', x: x, y: y, r: r * 0.8, life: 22, seed: Math.random() * TAU });
+    },
+    volt: function (fx, x, y, r) {                      // 雷：朝四面八方窜的电弧
+      fx.mark({ type: 'zap', x: x, y: y, r: r, life: 14 });
+      fx.bursts.push({ x: x, y: y, r: r * 0.5, life: 10, max: 10, rot: Math.random() * TAU, n: 7, c1: YELLOW, c2: PAPER });
+      chips(fx, x, y, 8, r * 0.16, [YELLOW, PAPER], 3.5);
+    },
+    energy: function (fx, x, y, r, s) {                 // 光：两道扩开的光环 + 十字闪光，没有烟
+      fx.mark({ type: 'ring', x: x, y: y, r: r, life: 18, c: s.glow });
+      fx.mark({ type: 'ring', x: x, y: y, r: r * 0.6, life: 24, c: PAPER });
+      fx.mark({ type: 'cross', x: x, y: y, r: r, life: 14, c: s.glow });
+    },
+    dust: function (fx, x, y, r, s, ground) {           // 重炮：炸起来的是土和石头
+      fx.bursts.push({ x: x, y: y, r: r * 0.75, life: 14, max: 14, rot: Math.random() * TAU, n: 9, c1: ground.body, c2: ground.top });
+      fx.mark({ type: 'ring', x: x, y: y, r: r, life: 16, c: ground.top, flat: true });
+      chips(fx, x, y, 16, r * 0.17, [ground.body, ground.deep, ground.top], 7);
+      smoke(fx, x, y, r, 8, ground.top);
+    }
+  };
+
+  /** 一发武器落地。w 是武器，ground 是这张图的地面配色（重炮炸起来的土要用） */
+  Particles.prototype.boom = function (x, y, r, w, ground) {
+    var fam = RZ.lookOf ? RZ.lookOf(w) : null;
+    var kind = fam && BOOMS[fam.boom] ? fam.boom : 'fire';
+    BOOMS[kind](this, x, y, r, w.shell, ground || { top: '#edc06a', body: '#cf8f3f', deep: '#96592a' });
+  };
+
+  // ---- 留场效果怎么画 ----
+  var MARKS = {
+    ring: function (ctx, m, u) {                        // 扩开的环；flat 的是贴地的椭圆
+      var R = m.r * (0.3 + u * 1.0), lw = 1 + 6 * (1 - u);
+      ctx.beginPath(); ctx.ellipse(m.x, m.y, R, m.flat ? R * 0.32 : R, 0, 0, TAU);
+      inkLine(ctx, m.c, lw);
+    },
+    cross: function (ctx, m, u) {
+      var sc = u < 0.3 ? u / 0.3 : 1 - (u - 0.3) / 0.7;
+      star(ctx, m.x, m.y, m.r * 1.7 * sc + 2, m.r * 0.1 * sc + 1, 4, 0); ink(ctx, PAPER, 2.4);
+      star(ctx, m.x, m.y, m.r * 0.9 * sc + 1, m.r * 0.1 * sc + 1, 4, 0.785); ink(ctx, m.c, 2);
+    },
+    zap: function (ctx, m, u) {                         // 每帧重画一遍，所以一直在跳
+      ctx.beginPath();
+      for (var i = 0; i < 7; i++) {
+        var a = i / 7 * TAU + Math.random() * 0.5, R = m.r * (0.7 + Math.random() * 0.6) * (1 - u * 0.4);
+        zig(ctx, m.x, m.y, m.x + Math.cos(a) * R, m.y + Math.sin(a) * R, 7, 5);
+      }
+      inkLine(ctx, YELLOW, 3);
+    },
+    flower: function (ctx, m, u, t) {                   // 一圈往外窜的火舌
+      var sc = u < 0.25 ? 0.4 + u * 2.4 : 1 - (u - 0.25) / 0.75 * 0.9;
+      for (var pass = 0; pass < 2; pass++) {
+        for (var i = 0; i < 8; i++) {
+          var a = m.seed + i / 8 * TAU, L = m.r * (0.75 + 0.3 * Math.sin(i * 2.3 + t * 0.03)) * sc * (pass ? 0.6 : 1), wd = m.r * 0.2 * sc * (pass ? 0.55 : 1);
+          var cx = Math.cos(a), cy = Math.sin(a);
+          ctx.beginPath();
+          ctx.moveTo(m.x - cy * wd, m.y + cx * wd);
+          ctx.quadraticCurveTo(m.x + cx * L * 0.5 - cy * wd * 1.3, m.y + cy * L * 0.5 + cx * wd * 1.3, m.x + cx * L, m.y + cy * L);
+          ctx.quadraticCurveTo(m.x + cx * L * 0.5 + cy * wd * 1.3, m.y + cy * L * 0.5 - cx * wd * 1.3, m.x + cy * wd, m.y - cx * wd);
+          ctx.closePath();
+          if (pass) { ctx.fillStyle = YELLOW; ctx.fill(); } else ink(ctx, RED, 2.4);
+        }
+      }
+    },
+    fire: function (ctx, m, u, t) {                     // 地上的火：沿坑边一排火苗，慢慢烧矮
+      var p = m.pts, left = 1 - u, tall = m.tall || 1;
+      for (var i = 0; i < p.length; i += 4) {
+        var h = (9 + m.r * 0.22) * p[i + 2] * tall * Math.min(1, left * 1.6), wd = 4 + h * 0.22;
+        if (h < 3) continue;
+        var sway = Math.sin(t * 0.02 + p[i + 3]) * wd * 0.7, f = 0.8 + 0.2 * Math.sin(t * 0.05 + p[i + 3] * 3);
+        poly(ctx, [p[i] - wd, p[i + 1], p[i] - wd * 0.4 + sway * 0.4, p[i + 1] - h * 0.5 * f, p[i] + sway, p[i + 1] - h * f, p[i] + wd * 0.5 + sway * 0.3, p[i + 1] - h * 0.45 * f, p[i] + wd, p[i + 1]]);
+        ink(ctx, RED, 2);
+        poly(ctx, [p[i] - wd * 0.5, p[i + 1], p[i] + sway * 0.5, p[i + 1] - h * 0.55 * f, p[i] + wd * 0.5, p[i + 1]]);
+        ctx.fillStyle = YELLOW; ctx.fill();
+      }
+    },
+    splat: function (ctx, m, u) {                       // 一摊：中间一块，周围甩出几滴
+      var sc = u < 0.15 ? 0.3 + u / 0.15 * 0.7 : u > 0.75 ? 1 - (u - 0.75) / 0.25 : 1, R = m.r * 0.5 * sc, i, a, d;
+      if (R < 2) return;
+      ctx.fillStyle = INK; ctx.beginPath();
+      ctx.ellipse(m.x, m.y, R + 2.5, R * 0.8 + 2.5, 0, 0, TAU);
+      for (i = 0; i < 7; i++) {
+        a = m.seed + i * 0.9; d = R * (1.05 + (i % 3) * 0.28);
+        ctx.moveTo(m.x + Math.cos(a) * d + R * 0.26 + 2.5, m.y + Math.sin(a) * d * 0.8);
+        ctx.arc(m.x + Math.cos(a) * d, m.y + Math.sin(a) * d * 0.8, R * (0.14 + (i % 2) * 0.12) + 2.5, 0, TAU);
+      }
+      ctx.fill();
+      ctx.fillStyle = m.c; ctx.beginPath();
+      ctx.ellipse(m.x, m.y, R, R * 0.8, 0, 0, TAU);
+      for (i = 0; i < 7; i++) {
+        a = m.seed + i * 0.9; d = R * (1.05 + (i % 3) * 0.28);
+        ctx.moveTo(m.x + Math.cos(a) * d + R * 0.26, m.y + Math.sin(a) * d * 0.8);
+        ctx.arc(m.x + Math.cos(a) * d, m.y + Math.sin(a) * d * 0.8, R * (0.14 + (i % 2) * 0.12), 0, TAU);
+      }
+      ctx.fill();
+      if (m.c2) { ctx.beginPath(); ctx.ellipse(m.x, m.y - R * 0.05, R * 0.5, R * 0.42, 0, 0, TAU); ink(ctx, m.c2, 2); }
+    },
+    web: function (ctx, m, u) {                         // 蛛网：十根辐条 + 三圈下垂的丝
+      var sc = u < 0.08 ? u / 0.08 : u > 0.88 ? (1 - u) / 0.12 : 1, R = m.r * sc, n = 10, i, k;
+      if (R < 4) return;
+      ctx.beginPath();
+      for (i = 0; i < n; i++) {
+        var a = m.seed + i / n * TAU;
+        ctx.moveTo(m.x, m.y); ctx.lineTo(m.x + Math.cos(a) * R, m.y + Math.sin(a) * R);
+      }
+      for (k = 1; k <= 3; k++) {
+        var rr = R * (0.3 * k + 0.02);
+        for (i = 0; i < n; i++) {
+          var a0 = m.seed + i / n * TAU, a1 = m.seed + (i + 1) / n * TAU, am = (a0 + a1) / 2;
+          ctx.moveTo(m.x + Math.cos(a0) * rr, m.y + Math.sin(a0) * rr);
+          ctx.quadraticCurveTo(m.x + Math.cos(am) * rr * 0.86, m.y + Math.sin(am) * rr * 0.86, m.x + Math.cos(a1) * rr, m.y + Math.sin(a1) * rr);
+        }
+      }
+      inkLine(ctx, PAPER, 1.8);
+    },
+    whirl: function (ctx, m, u, t) {
+      ctx.save(); ctx.translate(m.x, m.y);
+      swirl(ctx, 1, m.seed - u * 5, 3, m.r * (0.4 + u * 0.9));
+      inkLine(ctx, '#dff6ff', 1 + 3.5 * (1 - u));
+      ctx.restore();
+    },
+    twister: function (ctx, m, u, t) {                  // 立在落点上的龙卷：先长高，再缩回去
+      var sc = u < 0.2 ? u / 0.2 : u > 0.7 ? (1 - u) / 0.3 : 1, h = m.r * 2.4 * sc;
+      if (h < 6) return;
+      ctx.save(); ctx.translate(m.x, m.y - h / 2);
+      // funnel 以自己的中心为原点、上宽下窄
+      funnel(ctx, 1, t * 2, h, m.r * 0.8 * sc, m.seed);
+      ctx.restore();
+    },
+    pow: function (ctx, m, u) {                         // 钢铁撞击：一颗白星 + 一圈冲击线
+      var sc = u < 0.3 ? 0.5 + u / 0.3 * 0.6 : 1.1 * (1 - (u - 0.3) / 0.7);
+      star(ctx, m.x, m.y, m.r * 0.95 * sc, m.r * 0.5 * sc, 8, m.seed); ink(ctx, PAPER, 3);
+      star(ctx, m.x, m.y, m.r * 0.5 * sc, m.r * 0.26 * sc, 8, m.seed + 0.4); ctx.fillStyle = '#9fb3c8'; ctx.fill();
+      ctx.beginPath();
+      for (var i = 0; i < 8; i++) {
+        var a = m.seed + (i + 0.5) / 8 * TAU, r0 = m.r * (1.0 + u * 0.5), r1 = r0 + m.r * 0.35 * (1 - u);
+        ctx.moveTo(m.x + Math.cos(a) * r0, m.y + Math.sin(a) * r0); ctx.lineTo(m.x + Math.cos(a) * r1, m.y + Math.sin(a) * r1);
+      }
+      ctx.lineWidth = 3.5; ctx.lineCap = 'round'; ctx.strokeStyle = INK; ctx.stroke();
+    }
+  };
+  Particles.prototype.drawMarks = function (ctx, t) {
+    var ms = this.marks;
+    ctx.save();
+    ctx.lineJoin = 'round';
+    for (var i = 0; i < ms.length; i++) {
+      var m = ms[i];
+      if (MARKS[m.type]) MARKS[m.type](ctx, m, 1 - m.life / m.max, t || 0);
+    }
     ctx.restore();
   };
 

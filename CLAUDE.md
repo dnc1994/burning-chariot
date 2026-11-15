@@ -54,6 +54,24 @@
 - 背景是开局画一次存进离屏画布的（`Background.render()`），每帧只有一次 `drawImage`。
   往背景里加会动的东西要单独在 `draw()` 里画，别让整张底图每帧重画。
 
+### 武器的样子（`look`）
+
+每把武器在 `data.js` 里有一个 `look`（分裂 / 撒出来的子弹可以用 `childLook` 换一副样子）。
+它只影响视听，不影响任何数值，一共管四件事：
+
+| 在哪 | 管什么 |
+| --- | --- |
+| `render.js` 的 `SHOTS[look]` | 弹体长什么样（画在以弹体为原点的坐标里，自己决定转不转） |
+| `render.js` 的 `PRE[look]` | 弹体身后拖着什么——光束、丝线、电弧、火带（世界坐标，用 `p.trail`） |
+| `render.js` 的 `TRAIL_OF[look]` | 飞行时掉什么渣：烟、火星、滴液、风；不写就是什么都不掉 |
+| `data.js` 的 `RZ.LOOKS[look]` | `boom` 落地炸成什么样（`BOOMS`）、`snd` 出膛 / 落地是什么声音（`audio.js` 的 `FIRE` / `BOOM`） |
+
+- 原则是**名副其实**：激光是一道光（没有弹体，只有沿弹道亮起来的光束），蛋落地是蛋黄，
+  蛛网落地结网。加新武器先想「它叫这个名字，那它该是什么东西」，别又画成一颗带颜色的球。
+- 留在场上一会儿的效果（蛛网、地火、龙卷、光环）是 `Particles.mark()`，画法在 `MARKS` 里，上限 40 个。
+- 落地效果里要用到地面颜色的（重炮炸起的土）走 `boom(x, y, r, w, ground)` 的最后一个参数。
+- 改完开 `test/weapon-check.html?f=6`：三十二种弹体和落地效果的总览（`f` 是落地效果推进到第几帧）。
+
 ## 1.7 声音：「锣鼓 + 鞭炮」
 
 声音跟画面是一套。`js/audio.js` 里有几件合成出来的「乐器」，新声音尽量拿它们拼，别再写裸的方波哔哔声：
@@ -68,6 +86,8 @@
 | `pluck` 扬琴 | 胜负的旋律、回血。只用五声音阶（文件里那排 `C5…E6`） |
 | `pop` / `crackle` 鞭炮 | 每次爆炸的尾巴 |
 
+- **出膛和落地按武器家族分九种**（`FIRE` / `BOOM` 两张表：gun / heavy / flame / zap / volt / goo / wind / steel / egg），
+  由 `RZ.LOOKS[look].snd` 决定。鞭炮尾巴只属于火药类；激光、毒液、风都不该「噼里啪啦」。
 - 每个声音是 `SOUNDS` 表里的一个 `function (t, 参数)`，对外自动包成 `RZ.SFX.名字(参数)`，
   静音或没有音频环境时什么都不做——所以规则代码里可以随手调，不用判空。
 - **会在同一帧里被调很多次的声音要加 `gate()`**（爆炸、受击、移动、回血），不然散射武器一落地就是十几声叠在一起。
@@ -110,6 +130,7 @@ test/ui-check.html?stage=title|setup|codex|battle|fire|aimline|pause|enemy|items
 test/perf-check.html?n=200
 test/run-check.html?stage=hub|map|boss|reward|shop|rest|event|over|battle|charge|bossfight|flow
 test/sfx-check.html        # 音效试听 + 离线量峰值；headless 下 --dump-dom 看 #report
+test/weapon-check.html?f=6 # 所有武器的弹体与落地效果总览
 ```
 
 ## 3. 架构

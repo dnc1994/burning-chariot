@@ -21,9 +21,13 @@ button.bad{background:#f5b921}
 <script>
 var SFX = RZ.SFX, grid = document.getElementById('grid');
 // 带参数的声音各试一遍
-var cases = [];
+var cases = [], KINDS = ['gun', 'heavy', 'flame', 'zap', 'volt', 'goo', 'wind', 'steel', 'egg'];
 SFX.names().forEach(function (n) {
-  if (n === 'explode') { cases.push([n, false, '小爆炸']); cases.push([n, true, '大爆炸']); }
+  if (n === 'explode') {
+    KINDS.forEach(function (k) { cases.push([n, { big: false, kind: k }, k]); });
+    cases.push([n, { big: true, kind: 'gun' }, 'gun 大']); cases.push([n, { big: true, kind: 'heavy' }, 'heavy 大']);
+  }
+  else if (n === 'fire') KINDS.forEach(function (k) { cases.push([n, k, k]); });
   else if (n === 'turn') { cases.push([n, true, '轮到你']); cases.push([n, false, '轮到对面']); }
   else cases.push([n, undefined, '']);
 });

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>武器外观自检</title>
+<style>
+@font-face{font-family:"RZ Display";src:url("../fonts/rz-display.woff2") format("woff2")}
+html,body{margin:0;background:#1b1410} canvas{display:block}
+</style></head>
+<body>
+<canvas id="c"></canvas>
+<script src="../js/data.js"></script>
+<script src="../js/render.js"></script>
+<script>
+/* 三十把武器 + 两种道具弹的外观总览：每格左边是飞行中的弹体（带一段假弹道和掉的渣），
+   右边是落地效果。?f=6 指定落地效果推进到第几帧（默认 6；试试 2 / 14 / 40 看不同阶段）。
+   改了 render.js 的 SHOTS / BOOMS 之后截一张图对着看。 */
+var q = new URLSearchParams(location.search), F = parseInt(q.get('f') || '6', 10);
+var list = [];
+RZ.VEHICLES.forEach(function (v) { ['w1', 'w2', 'ss'].forEach(function (k) { list.push({ w: v[k], v: v, slot: k }); }); });
+list.push({ w: RZ.LOCATOR, v: null }); list.push({ w: RZ.STUN_SHELL, v: null });
+var COLS = 6, CW = 320, CH = 190, rows = Math.ceil(list.length / COLS);
+var cv = document.getElementById('c'); cv.width = COLS * CW; cv.height = rows * CH;
+var g = cv.getContext('2d');
+var ground = RZ.MAPS[0].ground;
+function draw() {
+  list.forEach(function (it, i) {
+    var x0 = (i % COLS) * CW, y0 = Math.floor(i / COLS) * CH, w = it.w;
+    g.save();
+    g.beginPath(); g.rect(x0, y0, CW, CH); g.clip();
+    g.fillStyle = (i + Math.floor(i / COLS)) % 2 ? '#e08a4a' : '#f08a2c'; g.fillRect(x0, y0, CW, CH);
+    g.fillStyle = ground.body; g.fillRect(x0, y0 + 150, CW, 40);
+    g.fillStyle = '#1b1410'; g.fillRect(x0, y0 + 148, CW, 3);
+    // 飞行中的弹体：沿一段抛物线走 40 帧，记下弹道、掉渣
+    var fx = new RZ.Particles();
+    var p = { x: x0 + 10, y: y0 + 120, vx: 3.4, vy: -3.2, w: w, age: 0, trail: [], team: 0 };
+    for (var f = 0; f < 34; f++) {
+      p.vy += 0.1; p.x += p.vx; p.y += p.vy; p.age++;
+      if ((p.age & 1) === 0) p.trail.push(p.x, p.y);
+      fx.trail(p); fx.update();
+    }
+    fx.draw(g);
+    RZ.drawProjectile(g, p, 1000 + i * 37);
+    // 落地效果
+    var fx2 = new RZ.Particles();
+    if (!w.locator) fx2.boom(x0 + 236, y0 + 112, Math.min(60, w.radius || 40), w, ground);
+    for (f = 0; f < F; f++) fx2.update();
+    fx2.drawMarks(g, 1000 + F * 16); fx2.draw(g);
+    g.font = '20px "RZ Display", sans-serif'; g.textAlign = 'left'; g.lineJoin = 'round';
+    g.lineWidth = 5; g.strokeStyle = '#1b1410'; g.strokeText((it.v ? it.v.name + ' ' : '') + w.name, x0 + 8, y0 + 24);
+    g.fillStyle = '#f1e2bd'; g.fillText((it.v ? it.v.name + ' ' : '') + w.name, x0 + 8, y0 + 24);
+    g.restore();
+  });
+}
+draw();
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
+</script>
+</body></html>

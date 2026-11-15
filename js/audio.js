@@ -138,6 +138,107 @@
   // 五声音阶，够用了
   var A4 = 440, C5 = 523, D5 = 587, E5 = 659, G5 = 784, A5 = 880, C6 = 1047, D6 = 1175, E6 = 1319;
 
+  // ================= 各家武器的出膛声 / 落地声 =================
+  var FIRE = {
+    gun: function (t) {                        // 火药：「嗵」一声，后面拖一道嗤
+      drum(t, 85, 0.75, 0.22);
+      hit(t, 0.25, 0.3, 'bandpass', 600, 3200, 0.8);
+      pop(t, 0.32);
+    },
+    heavy: function (t) {                      // 重炮：更沉、更长
+      drum(t, 58, 0.9, 0.4);
+      hit(t, 0.35, 0.34, 'lowpass', 1400, 150);
+      pop(t, 0.3);
+    },
+    flame: function (t) {                      // 火：一口气喷出去的「呼——」
+      hit(t, 0.42, 0.36, 'bandpass', 300, 1900, 0.7);
+      hit(t + 0.05, 0.3, 0.16, 'highpass', 2500, 5000);
+      drum(t, 90, 0.4, 0.18);
+    },
+    zap: function (t) {                        // 激光：往下滑的「biu」
+      osc('sawtooth', 2100, 320, t, 0.2, 0.3, 0.2);
+      osc('square', 2800, 700, t, 0.12, 0.14, 0.12);
+      osc('sine', 1050, 160, t, 0.24, 0.42, 0.22);
+    },
+    volt: function (t) {                       // 雷：一阵嗞啦 + 低低的嗡
+      for (var i = 0; i < 5; i++) hit(t + i * 0.022 + Math.random() * 0.01, 0.02, 0.3, 'highpass', 3500 + Math.random() * 3000, 2500);
+      osc('square', 110, 96, t, 0.2, 0.16);
+      drum(t, 100, 0.35, 0.14);
+    },
+    goo: function (t) {                        // 毒液：湿乎乎的「噗」
+      osc('sine', 340, 130, t, 0.16, 0.62, 0.14);
+      osc('sine', 520, 900, t + 0.03, 0.07, 0.22, 0.07);
+      hit(t, 0.1, 0.36, 'lowpass', 900, 250);
+    },
+    wind: function (t) {                       // 风：一声「咻」
+      hit(t, 0.34, 0.95, 'bandpass', 500, 2800, 2.2);
+      osc('sine', 600, 1300, t, 0.22, 0.2, 0.22, 0.03);
+    },
+    steel: function (t) {                      // 钢铁：「当」的一声弹出去
+      block(t, 420, 0.4);
+      osc('sine', 880, 860, t, 0.22, 0.2, 0, 0.003); osc('sine', 880 * 2.4, 880 * 2.4, t, 0.12, 0.1, 0, 0.003);
+      drum(t, 95, 0.5, 0.16);
+    },
+    egg: function (t) {                        // 蛋：「啵」
+      block(t, 1300, 0.34);
+      osc('sine', 420, 940, t, 0.09, 0.3, 0.08);
+      drum(t, 120, 0.3, 0.1);
+    }
+  };
+  var BOOM = {
+    gun: function (t, big) {                   // 火药：鼓 + 炸裂 + 鞭炮尾巴
+      drum(t, vary(big ? 48 : 62), big ? 0.85 : 0.65, big ? 0.8 : 0.45);
+      hit(t, big ? 0.5 : 0.3, big ? 0.45 : 0.32, 'lowpass', big ? 2600 : 3200, 120);
+      crackle(t + 0.05, big ? 9 : 5, big ? 0.55 : 0.32, big ? 0.22 : 0.18);
+    },
+    heavy: function (t, big) {                 // 重炮：闷雷一样的一声，后面滚着碎石
+      drum(t, vary(big ? 36 : 44), 0.95, big ? 1.0 : 0.65);
+      hit(t, big ? 0.9 : 0.6, 0.4, 'lowpass', 700, 60);
+      for (var i = 0; i < (big ? 7 : 4); i++) drum(t + 0.12 + Math.random() * 0.5, vary(160, 0.3), 0.12, 0.06);
+    },
+    flame: function (t, big) {                 // 火：「轰」地烧开，不脆
+      drum(t, vary(60), big ? 0.7 : 0.5, big ? 0.6 : 0.4);
+      hit(t, big ? 0.9 : 0.6, big ? 0.4 : 0.3, 'lowpass', 1800, 180);
+      hit(t + 0.1, big ? 0.7 : 0.45, 0.12, 'bandpass', 2600, 1200, 0.8);
+      crackle(t + 0.15, big ? 5 : 3, 0.5, 0.1);
+    },
+    zap: function (t, big) {                   // 激光：一声收束的「嗡——」，带一下亮的
+      osc('sawtooth', big ? 700 : 950, 70, t, big ? 0.5 : 0.32, 0.22, big ? 0.45 : 0.3);
+      osc('sine', big ? 180 : 240, 50, t, big ? 0.6 : 0.4, 0.5, 0.3);
+      bell(t, 1320, 0.16, 0.25);
+      hit(t, 0.06, 0.25, 'highpass', 4000, 2500);
+    },
+    volt: function (t, big) {                  // 雷：鼓 + 一大片嗞啦
+      drum(t, vary(55), big ? 0.75 : 0.55, big ? 0.6 : 0.4);
+      for (var i = 0; i < (big ? 14 : 9); i++) hit(t + Math.random() * 0.3, 0.018, 0.26, 'highpass', 3200 + Math.random() * 3500, 2400);
+      osc('square', 96, 80, t, 0.3, 0.16);
+    },
+    goo: function (t, big) {                   // 毒液：一摊「啪叽」，冒几个泡
+      hit(t, 0.28, 0.42, 'lowpass', 1100, 140);
+      osc('sine', 210, 62, t, 0.3, 0.5, 0.2);
+      for (var i = 0; i < (big ? 6 : 4); i++) {
+        var f = 300 + Math.random() * 500, at = t + 0.12 + Math.random() * 0.45;
+        osc('sine', f, f * 1.9, at, 0.06, 0.12, 0.06);
+      }
+    },
+    wind: function (t, big) {                  // 风：「呜」地卷开
+      hit(t, big ? 0.8 : 0.5, 0.42, 'bandpass', 2600, 280, 1.8);
+      hit(t + 0.05, big ? 0.6 : 0.4, 0.2, 'bandpass', 900, 3000, 3);
+      drum(t, 70, 0.4, 0.3);
+    },
+    steel: function (t, big) {                 // 钢铁：鼓 + 一声铁器相撞的「哐」
+      drum(t, vary(70), 0.6, 0.35);
+      gong(t, vary(520, 0.06), 0.34, big ? 0.9 : 0.55, -1);
+      block(t, 600, 0.3);
+      hit(t, 0.05, 0.3, 'highpass', 3000, 2000);
+    },
+    egg: function (t, big) {                   // 蛋：壳裂开 + 「啪」一摊
+      block(t, vary(1500, 0.1), 0.4); block(t + 0.03, vary(1900, 0.1), 0.25);
+      hit(t + 0.02, 0.16, 0.3, 'lowpass', 1400, 200);
+      drum(t, 110, big ? 0.5 : 0.36, 0.2);
+    }
+  };
+
   // ================= 一个个声音 =================
   // 每个都是 function (t, 参数…)，t 是开始时间。下面统一包一层「静音 / 没有音频环境就不响」。
   var SOUNDS = {
@@ -150,16 +251,13 @@
       block(t, vary(320, 0.1), 0.1);
     },
 
-    fire: function (t) {                       // 「嗵」一声出膛，后面拖一道嗤
-      drum(t, 85, 0.75, 0.22);
-      hit(t, 0.25, 0.3, 'bandpass', 600, 3200, 0.8);
-      pop(t, 0.32);
-    },
-    explode: function (t, big) {               // 鼓 + 炸裂 + 鞭炮尾巴
+    // 出膛和落地的声音按武器的「家族」分（data.js 的 RZ.LOOKS[look].snd）：
+    // 火药是鼓加鞭炮，激光是一声往下滑的「biu」，毒液是湿的，钢铁是「当」的一声……
+    fire: function (t, kind) { (FIRE[kind] || FIRE.gun)(t); },
+    explode: function (t, arg) {
       if (!gate('explode', 0.04)) return;
-      drum(t, vary(big ? 48 : 62), big ? 0.85 : 0.65, big ? 0.8 : 0.45);
-      hit(t, big ? 0.5 : 0.3, big ? 0.45 : 0.32, 'lowpass', big ? 2600 : 3200, 120);
-      crackle(t + 0.05, big ? 9 : 5, big ? 0.55 : 0.32, big ? 0.22 : 0.18);
+      var big = arg === true || !!(arg && arg.big), kind = arg && arg.kind;
+      (BOOM[kind] || BOOM.gun)(t, big);
     },
     bounce: function (t) { block(t, vary(700, 0.08), 0.32); osc('sine', 500, 300, t, 0.06, 0.16); },
     thunder: function (t) {
