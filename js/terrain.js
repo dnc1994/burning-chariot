@@ -130,9 +130,34 @@
   }
 
   // --- 上色 ------------------------------------------------------------
+  // 印刷品的画法：一圈墨线 + 表层平涂 + 往深处越来越密的网点。没有渐变、没有随机噪点。
+  var INK = [27, 20, 16];
+  var CELL = 9;                                      // 网点的格距
+
+  /** 这个像素离空气不到 3px 吗？是的话它属于轮廓墨线 */
+  function nearAir(mask, x, y) {
+    if (y < 3) return y < 1 ? false : !mask[(y - 1) * WORLD_W + x];
+    var i = y * WORLD_W + x;
+    if (!mask[i - WORLD_W * 3] || !mask[i - WORLD_W]) return true;
+    if (y + 3 < WORLD_H && !mask[i + WORLD_W * 3]) return true;
+    if (x >= 3 && !mask[i - 3]) return true;
+    if (x + 3 < WORLD_W && !mask[i + 3]) return true;
+    if (x >= 2 && !mask[i - WORLD_W * 2 - 2]) return true;
+    if (x + 2 < WORLD_W && !mask[i - WORLD_W * 2 + 2]) return true;
+    return false;
+  }
+
+  /** (x, y) 落在半径 r 的网点里吗？网点按世界坐标排成错位的格子 */
+  function inDot(x, y, r) {
+    var row = (y / CELL) | 0;
+    var dx = ((x + (row & 1 ? CELL / 2 : 0)) % CELL) - CELL / 2;
+    var dy = (y % CELL) - CELL / 2;
+    return dx * dx + dy * dy < r * r;
+  }
+
   function paint(mask, img, mapDef) {
     var g = mapDef.ground;
-    var top = hex(g.top), body = hex(g.body), deep = hex(g.deep), line = hex(g.line);
+    var top = hex(g.top), body = hex(g.body), deep = hex(g.deep);
     var d = img.data;
     var depth = new Int16Array(WORLD_W);
     for (var x = 0; x < WORLD_W; x++) depth[x] = -1;
@@ -142,12 +167,11 @@
         if (!mask[i]) { d[o + 3] = 0; depth[x] = -1; continue; }
         depth[x] = depth[x] < 0 ? 0 : depth[x] + 1;
         var dep = depth[x], c;
-        if (dep < 2) c = line;
-        else if (dep < 14) c = top;
-        else if (dep < 90) c = mix(body, top, Math.max(0, 1 - (dep - 14) / 76) * 0.5);
-        else c = mix(deep, body, Math.max(0, 1 - (dep - 90) / 180) * 0.6);
-        var n = (Math.random() - 0.5) * 16;
-        d[o] = clamp8(c[0] + n); d[o + 1] = clamp8(c[1] + n); d[o + 2] = clamp8(c[2] + n); d[o + 3] = 255;
+        if (nearAir(mask, x, y)) c = INK;
+        else if (dep < 16) c = top;                                   // 表层：一条平涂的色带
+        else if (dep < 19) c = deep;                                  // 表层下面压一道细线
+        else c = inDot(x, y, Math.min(4.3, 1.1 + (dep - 19) / 150 * 3.2)) ? deep : body;   // 网点由小到大，到底也留着格子
+        d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2]; d[o + 3] = 255;
       }
     }
   }
@@ -169,6 +193,7 @@
     paint(this.mask, this.img, mapDef);
     this.ctx.putImageData(this.img, 0, 0);
     this.dirty = null;
+    this.embers = [];                                 // 还在烧的弹坑边
   }
 
   Terrain.prototype.solid = function (x, y) {
@@ -205,14 +230,25 @@
     if (x1 > d.x1) d.x1 = x1; if (y1 > d.y1) d.y1 = y1;
   };
 
-  /** 炸出一个圆坑，边缘留焦痕 */
+  // 弹坑边缘的余烬：刚炸开是亮黄，慢慢烧成红、暗红，最后剩一圈焦黑。
+  // 这是整个画面的「签名」——燃烧战车，被炸过的地方真的会烧一会儿。
+  var EMBER = [[245, 185, 33], [226, 67, 42], [122, 31, 23], [52, 34, 26]];
+  var EMBER_AT = [0, 22, 60, 130];                    // 每一段颜色从第几帧开始
+  var CHAR = EMBER[3];
+
+  /**
+   * 炸出一个圆坑。坑壁重新描一圈墨线，墨线外面是一圈余烬（小坑直接是焦痕）。
+   * 只改掩码和像素，不碰规则——无头测试里照常能跑。
+   */
   Terrain.prototype.carve = function (cx, cy, r) {
     cx |= 0; cy |= 0;
-    var rim = r + 7;
+    var rim = r + 9;
     var x0 = Math.max(0, cx - rim), x1 = Math.min(WORLD_W - 1, cx + rim);
     var y0 = Math.max(0, cy - rim), y1 = Math.min(WORLD_H - 1, cy + rim);
     if (x0 > x1 || y0 > y1) return;
-    var d = this.img.data, m = this.mask, r2 = r * r, rim2 = rim * rim;
+    var hot = r >= 20;                                 // 穿地钻那种小洞不烧，省得满屏都是
+    var glow = hot ? EMBER[0] : CHAR;
+    var d = this.img.data, m = this.mask, r2 = r * r, ink2 = (r + 3) * (r + 3), rim2 = rim * rim;
     for (var y = y0; y <= y1; y++) {
       var dy = y - cy, dy2 = dy * dy;
       for (var x = x0; x <= x1; x++) {
@@ -222,9 +258,33 @@
         if (dd <= r2) {
           m[i] = 0; d[o + 3] = 0;
         } else if (m[i]) {
-          var t = 0.42 + 0.5 * ((dd - r2) / (rim2 - r2));
-          d[o] *= t; d[o + 1] *= t; d[o + 2] *= t;
+          var c = dd <= ink2 ? INK : glow;
+          d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2];
         }
+      }
+    }
+    this._touch(x0, y0, x1, y1);
+    if (hot) {
+      this.embers.push({ cx: cx, cy: cy, r: r, age: 0, stage: 0 });
+      if (this.embers.length > 28) this.cool(this.embers.shift(), 3);   // 太多了就让最老的直接烧完
+    }
+  };
+
+  /** 把一圈余烬重涂成第 stage 段的颜色；只涂还在的地面，已经被别的坑挖掉的不管 */
+  Terrain.prototype.cool = function (e, stage) {
+    var c = EMBER[stage], rim = e.r + 9;
+    var x0 = Math.max(0, e.cx - rim), x1 = Math.min(WORLD_W - 1, e.cx + rim);
+    var y0 = Math.max(0, e.cy - rim), y1 = Math.min(WORLD_H - 1, e.cy + rim);
+    var d = this.img.data, m = this.mask, ink2 = (e.r + 3) * (e.r + 3), rim2 = rim * rim;
+    for (var y = y0; y <= y1; y++) {
+      var dy = y - e.cy, dy2 = dy * dy;
+      for (var x = x0; x <= x1; x++) {
+        var dx = x - e.cx, dd = dx * dx + dy2;
+        if (dd <= ink2 || dd > rim2) continue;
+        var i = y * WORLD_W + x, o = i * 4;
+        // 只动仍是余烬色的像素：后来的爆炸可能已经在这里描了新的墨线
+        if (!m[i] || d[o] === INK[0]) continue;
+        d[o] = c[0]; d[o + 1] = c[1]; d[o + 2] = c[2];
       }
     }
     this._touch(x0, y0, x1, y1);
@@ -241,6 +301,17 @@
 
   /** 把脏矩形回写到离屏画布，每帧调用一次 */
   Terrain.prototype.flush = function () {
+    // 余烬降温放在这里：flush 只在真正绘制时才跑，无头模拟不用为它花一个周期
+    var es = this.embers;
+    for (var k = es.length - 1; k >= 0; k--) {
+      var e = es[k];
+      e.age++;
+      if (e.stage < 3 && e.age >= EMBER_AT[e.stage + 1]) {
+        e.stage++;
+        this.cool(e, e.stage);
+        if (e.stage === 3) es.splice(k, 1);
+      }
+    }
     var d = this.dirty;
     if (!d) return;
     this.ctx.putImageData(this.img, 0, 0, d.x0, d.y0, d.x1 - d.x0 + 1, d.y1 - d.y0 + 1);

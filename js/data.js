@@ -14,7 +14,7 @@
   'use strict';
 
   // 版本号：每次大更新都要改这里，并在 CHANGELOG.md 里记一条、打一个同名 git tag
-  RZ.VERSION = '1.0.0';
+  RZ.VERSION = '1.1.0';
 
   RZ.MAX_FUEL = 200;          // 燃料上限，全场统一
   RZ.START_FUEL = 22;         // 开局油量：勉强够打一发一号或二号武器 + 挪两步
@@ -177,32 +177,32 @@
     {
       id: 'dry', name: '干枯之大地', gen: 'hills', gravity: 0.30, windMax: 12, voidBottom: false,
       sky: ['#f6c98a', '#e08d5a', '#8b4a3c'],
-      ground: { top: '#d9a05b', body: '#a9713c', deep: '#6e4423', line: '#f0c98d' },
-      haze: 'rgba(255,190,120,0.10)'
+      ground: { top: '#f3cd76', body: '#dc9a45', deep: '#a4602b', line: '#1b1410' },
+      haze: null
     },
     {
       id: 'sea', name: '深海遗迹', gen: 'ruins', gravity: 0.24, windMax: 8, voidBottom: false,
       sky: ['#0d3b52', '#0a2740', '#04131f'],
-      ground: { top: '#4a7f74', body: '#2c5551', deep: '#16302f', line: '#7fd6bf' },
-      haze: 'rgba(60,180,200,0.14)', bubbles: true
+      ground: { top: '#7fd0b0', body: '#3a8f84', deep: '#1f5a5c', line: '#1b1410' },
+      haze: null, bubbles: true
     },
     {
       id: 'sky', name: '天空之城', gen: 'islands', gravity: 0.30, windMax: 16, voidBottom: true,
       sky: ['#bfe6ff', '#7cc0ec', '#3f7fb5'],
-      ground: { top: '#c7e8a0', body: '#8f9f6e', deep: '#5d6b49', line: '#eaffd0' },
-      haze: 'rgba(255,255,255,0.10)', clouds: true
+      ground: { top: '#9fd06a', body: '#d6ad6a', deep: '#9a7140', line: '#1b1410' },
+      haze: null, clouds: true
     },
     {
       id: 'star', name: '浩瀚星空', gen: 'asteroids', gravity: 0.20, windMax: 20, voidBottom: true,
       sky: ['#141a3c', '#0c0f26', '#05060f'],
-      ground: { top: '#8e8fb5', body: '#4e5075', deep: '#2a2b45', line: '#cfd2ff' },
-      haze: 'rgba(120,140,255,0.10)', stars: true
+      ground: { top: '#c4bdf0', body: '#7a72b8', deep: '#463f7c', line: '#1b1410' },
+      haze: null, stars: true
     },
     {
       id: 'canyon', name: '熔岩峡谷', gen: 'canyon', gravity: 0.32, windMax: 14, voidBottom: false,
       sky: ['#4a1220', '#7a2118', '#c24a16'],
-      ground: { top: '#5a3030', body: '#3a1e1e', deep: '#221010', line: '#ff8a4a' },
-      haze: 'rgba(255,90,40,0.12)', embers: true
+      ground: { top: '#d0704a', body: '#8a3f30', deep: '#4f201f', line: '#1b1410' },
+      haze: null, embers: true
     }
   ];
 
@@ -271,6 +271,6 @@
     stun: 3
   });
 
-  RZ.TEAM_COLORS = ['#ff5f5f', '#4fa8ff'];
+  RZ.TEAM_COLORS = ['#e2432a', '#2aa39c'];   // 朱红对青绿，都是印刷专色
   RZ.TEAM_NAMES = ['红队', '蓝队'];
 })(window.RZ || (window.RZ = {}));

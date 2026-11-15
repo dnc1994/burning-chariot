@@ -44,7 +44,10 @@
     RZ.MAPS.forEach(function (m) {
       var el = document.createElement('div');
       el.className = 'map-card' + (m.id === setup.mapId ? ' active' : '');
-      el.style.background = 'linear-gradient(160deg,' + m.sky[0] + ',' + m.sky[2] + ' 62%,' + m.ground.body + ')';
+      // 缩成一枚小海报：三条天空色带 + 表层 + 地面，全是硬边
+      var ps = (RZ.POSTER[m.id] || RZ.POSTER.dry).sky;
+      el.style.background = 'linear-gradient(' + ps[0] + ' 0 30%,' + ps[1] + ' 30% 52%,' + ps[2] + ' 52% 66%,#1b1410 66% 70%,' +
+        m.ground.top + ' 70% 82%,' + m.ground.body + ' 82%)';
       el.textContent = m.name;
       el.onclick = function () {
         setup.mapId = m.id;
@@ -601,6 +604,9 @@
     g.clearRect(0, 0, s, s);
     g.save();
     g.translate(c, c);
+    drawDialFace(g, wind, max);
+    g.restore();
+    return;
     // 底盘：地图背景可能很亮，仪表需要自己的暗底
     g.fillStyle = 'rgba(10,13,18,0.72)';
     g.beginPath(); g.arc(0, 0, 50, 0, 6.2832); g.fill();
@@ -636,23 +642,95 @@
     g.restore();
   }
 
+  /** 风向仪的表盘：纸色圆牌、墨线刻度、一支朱红的箭 */
+  function drawDialFace(g, wind, max) {
+    var INK = RZ.INK, PAPER = RZ.PAPER, i;
+    g.lineJoin = 'round';
+    g.fillStyle = INK; g.beginPath(); g.arc(4, 4, 48, 0, 6.2832); g.fill();          // 墨影
+    g.fillStyle = PAPER; g.beginPath(); g.arc(0, 0, 48, 0, 6.2832); g.fill();
+    g.lineWidth = 3; g.strokeStyle = INK; g.stroke();
+    g.lineWidth = 1.5; g.beginPath(); g.arc(0, 0, 42, 0, 6.2832); g.stroke();
+    for (i = 0; i < 24; i++) {
+      var a = i / 24 * 6.2832, long = i % 6 === 0;
+      g.lineWidth = long ? 3 : 1.5;
+      g.beginPath();
+      g.moveTo(Math.cos(a) * 42, Math.sin(a) * 42);
+      g.lineTo(Math.cos(a) * (long ? 34 : 38), Math.sin(a) * (long ? 34 : 38));
+      g.stroke();
+    }
+    // 风向箭头：向右为正，越长风越大
+    var ratio = Math.min(1, Math.abs(wind) / Math.max(1, max));
+    var dir = wind >= 0 ? 1 : -1, len = 10 + ratio * 24, y = 26;
+    if (wind === 0) return;
+    g.beginPath();
+    g.moveTo(-dir * len * 0.5, y - 3); g.lineTo(dir * len * 0.5, y - 3);
+    g.lineTo(dir * len * 0.5, y - 8); g.lineTo(dir * (len * 0.5 + 11), y);
+    g.lineTo(dir * len * 0.5, y + 8); g.lineTo(dir * len * 0.5, y + 3);
+    g.lineTo(-dir * len * 0.5, y + 3); g.closePath();
+    g.fillStyle = ratio > 0.66 ? '#d8361f' : ratio > 0.33 ? '#f5b921' : '#1f8f89';
+    g.fill(); g.lineWidth = 2.5; g.stroke();
+  }
+
+  /**
+   * 标题画面的主图：三辆战车一字排开，中间那辆正在开炮。
+   * 用的就是战场上那套造型函数，所以战车改了造型这里自动跟着变。
+   */
+  function drawTitleArt(t) {
+    var cv = $('title-art');
+    if (!cv || !cv.getContext) return;
+    var g = cv.getContext('2d'), W = 760, H = 230;
+    if (!g || !g.setTransform) return;
+    g.setTransform(2, 0, 0, 2, 0, 0);
+    g.clearRect(0, 0, W, H);
+    g.lineJoin = 'round';
+    var ground = 196;
+    // 身后升起来的大太阳
+    g.beginPath(); g.arc(W / 2, ground, 150, Math.PI, 0); g.closePath();
+    g.fillStyle = '#f5b921'; g.fill(); g.lineWidth = 5; g.strokeStyle = RZ.INK; g.stroke();
+    g.beginPath(); g.arc(W / 2, ground, 112, Math.PI, 0); g.lineWidth = 3; g.stroke();
+    // 地面：一条纸色带，压一道粗墨线
+    g.fillStyle = RZ.PAPER; g.fillRect(30, ground, W - 60, 22);
+    g.lineWidth = 5; g.strokeRect(30, ground, W - 60, 22);
+    g.fillStyle = RZ.INK;
+    for (var x = 44; x < W - 40; x += 14) { g.beginPath(); g.arc(x, ground + 11, 2.2, 0, 6.2832); g.fill(); }
+
+    var cast = [
+      { id: 'honglong', x: 150, s: 2.5, face: 1, aim: 40 },
+      { id: 'tiejingang', x: 612, s: 2.5, face: -1, aim: 46 },
+      { id: 'liehuo', x: 372, s: 3.7, face: 1, aim: 34 }
+    ];
+    cast.forEach(function (c) {
+      g.save();
+      g.translate(c.x, ground);
+      g.scale(c.s * c.face, c.s);
+      g.lineWidth = 2.5;
+      RZ.drawArt(g, RZ.vehicleById(c.id), t, c.aim);
+      g.restore();
+    });
+    // 中间那辆的炮口：一颗爆炸星，一明一灭
+    var big = 30 + 7 * Math.sin(t * 0.012);
+    var ma = 34 * Math.PI / 180, md = 3.7 * 40;
+    RZ.drawStar(g, 372 + Math.cos(ma) * md, ground - 3.7 * 24 - Math.sin(ma) * md, big, big * 0.5, 9, t * 0.0015, '#f1e2bd', 4);
+    RZ.drawStar(g, 372 + Math.cos(ma) * md, ground - 3.7 * 24 - Math.sin(ma) * md, big * 0.55, big * 0.3, 7, -t * 0.002, '#d8361f', 3);
+  }
+
   // ================= 结算 =================
   function showResult() {
     var tally = {};
     game.log.forEach(function (e) { tally[e.by] = (tally[e.by] || 0) + e.dmg; });
     var human = game.opts.humanTeam;
     var title = $('result-title');
-    if (game.result === -1) { title.textContent = '同归于尽'; title.style.color = '#c8d0dc'; }
+    if (game.result === -1) { title.textContent = '同归于尽'; title.style.color = '#e2cd9c'; }
     else if (human == null) { title.textContent = RZ.TEAM_NAMES[game.result] + '获胜'; title.style.color = RZ.TEAM_COLORS[game.result]; }
-    else if (game.result === human) { title.textContent = '胜　利'; title.style.color = '#ffb033'; }
-    else { title.textContent = '战败'; title.style.color = '#ff5f5f'; }
+    else if (game.result === human) { title.textContent = '胜　利'; title.style.color = '#f5b921'; }
+    else { title.textContent = '战　败'; title.style.color = '#d8361f'; }
 
     var body = '';
     game.units.forEach(function (u) {
       body += '<div class="rrow' + (u.alive ? '' : ' out') + '">' +
         '<span class="dot" style="background:' + RZ.TEAM_COLORS[u.team] + '"></span>' +
-        '<span>' + u.name + '<b style="color:#6f7a89;font-weight:400"> · ' + u.vehicle.tag + '</b></span>' +
-        '<span style="color:#8391a4">剩余 ' + Math.max(0, Math.round(u.hp)) + '</span>' +
+        '<span>' + u.name + '<b class="dim" style="font-weight:400">　' + u.vehicle.tag + '</b></span>' +
+        '<span class="dim">剩余 ' + Math.max(0, Math.round(u.hp)) + '</span>' +
         '<span class="dmg">输出 ' + Math.round(tally[u.index] || 0) + '</span>' +
         '</div>';
     });
@@ -722,6 +800,14 @@
     canvas = $('stage');
     ctx = canvas.getContext('2d');
     $('ver').textContent = 'v' + RZ.VERSION;
+    // 标题主图：只在标题画面显示着的时候动（排气口的火苗、炮口的星）
+    drawTitleArt(0);
+    if (typeof setInterval === 'function') {          // 无头测试的沙箱里没有定时器
+      setInterval(function () {
+        if ($('screen-title').classList.contains('active')) drawTitleArt(Date.now() % 1e7);
+      }, 90);
+    }
+    if (document.fonts && document.fonts.load) document.fonts.load('20px "RZ Display"');   // 让画布上的字尽早用上美术字
     buildMaps();
     buildVehicles();
     buildShop();

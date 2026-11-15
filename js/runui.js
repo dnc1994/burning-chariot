@@ -211,7 +211,7 @@
   function overHTML() {
     var relics = state.relics.map(function (id) { return Run.relicById(id).name; }).join('、') || '无';
     return '<div class="run-over"><div class="dialog wide">' +
-      '<h3 style="color:' + (state.won ? '#ffb033' : '#ff5f5f') + '">' + (state.won ? '远征通关' : '远征失败') + '</h3>' +
+      '<h3 style="color:' + (state.won ? '#f5b921' : '#d8361f') + '">' + (state.won ? '远征通关' : '远征失败') + '</h3>' +
       '<p class="over-line">' + (state.won ? '三个区域全部打穿。' : '倒在了「' + Run.ACTS[Math.min(state.act, 2)].name + '」第 ' + (state.step + 1) + ' 层。') + '</p>' +
       '<div class="result-body">' +
         '<div class="rrow"><span></span><span>打赢的战斗</span><span></span><span class="dmg">' + state.battles + ' 场</span></div>' +
