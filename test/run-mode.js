@@ -269,6 +269,33 @@ module.exports = function runModeTests(RZ, check, head) {
     check(g.hudState().mark === null && g.setMark(40) === false && g.units[0].markPower === 0, '经典规则没有力度标记');
   }
 
+  // ---------- WASD 挪镜头 ----------
+  head('镜头：WASD 看别处');
+  for (const arcade of [true, false]) {
+    const g = mk({ arcade, barrels: 0 });
+    const tag = arcade ? '爽快' : '经典';
+    g.viewW = 1100; g.viewH = 620;
+    g.units[0].x = 300; g.active = g.units[0]; g.phase = 'aim';
+    for (let i = 0; i < 80; i++) g.updateCamera();
+    const home = g.cam.x, x0 = g.units[0].x, fuel0 = g.units[0].fuel;
+    for (let i = 0; i < 40; i++) { g.applyHeld({ KeyD: true }); g.updateCamera(); }
+    check(g.cam.x > home + 300 && g.units[0].x === x0 && g.units[0].fuel === fuel0, `${tag}：按 D 镜头往右走，车不动、不花油`, `${Math.round(home)} → ${Math.round(g.cam.x)}`);
+    const there = g.cam.tx;                            // 镜头有缓动，松手后还会滑到目标位置
+    for (let i = 0; i < 120; i++) g.updateCamera();
+    check(Math.abs(g.cam.x - there) < 2 && g.cam.x > home + 300, `${tag}：松手后镜头停在挪到的地方，不弹回去`, `${Math.round(g.cam.x)}`);
+    for (let i = 0; i < 400; i++) { g.applyHeld({ d: true }); g.updateCamera(); }
+    check(g.cam.x <= RZ.WORLD_W - g.viewW + 1, `${tag}：挪不出地图`);
+    g.applyHeld({ ArrowLeft: true });
+    for (let i = 0; i < 120; i++) g.updateCamera();
+    check(Math.abs(g.cam.x - home) < 60, `${tag}：自己一移动，镜头就跟回来`, `${Math.round(g.cam.x)}`);
+    g.applyHeld({ KeyD: true }); g.applyHeld({ KeyD: true });
+    g.active = g.units[1];
+    g.updateCamera();
+    check(g.cam.free === false, `${tag}：换人出手，镜头不再停留`);
+    g.applyHeld({ KeyA: true }); g.updateCamera();
+    check(g.cam.free === true, `${tag}：电脑的回合里也能挪镜头`);
+  }
+
   // ---------- 电脑回合里预先调整 ----------
   head('爽快规则：电脑行动时可以先摆好角度 / 标记 / 武器');
   {

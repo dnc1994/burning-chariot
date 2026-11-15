@@ -306,6 +306,7 @@
     }
     var k = e.key;
     if (k === ' ' || k === 'Spacebar') k = 'Space';
+    if (e.code) keys[e.code] = true;            // WASD 挪镜头按物理键位认，不受输入法 / 大小写影响
     if (keys[k]) return;                        // 屏蔽系统按键重复
     keys[k] = true;
     onKeyDown(k);
@@ -314,6 +315,7 @@
   window.addEventListener('keyup', function (e) {
     var k = e.key;
     if (k === ' ' || k === 'Spacebar') k = 'Space';
+    if (e.code) keys[e.code] = false;
     keys[k] = false;
     onKeyUp(k);
   });
@@ -543,7 +545,7 @@
 
     setText('hint', u && u.ai ? (h.pre ? '电脑的回合　可以先调 ↑ ↓ 角度、标力度、选武器' : '电脑正在瞄准…')
       : (h.live && !h.unit.canAfford(h.unit.vehicle.w1) ? '燃料不足　Enter 跳过本回合攒油'
-        : '← → 移动　↑ ↓ 角度　空格 蓄力发射　Enter 跳过'));
+        : '← → 移动　↑ ↓ 角度　空格 蓄力发射　Enter 跳过　WASD 看别处'));
 
     // 出手队列（经典规则下 h.queue 恒为 null，这块始终隐藏）
     setHidden('queue', !h.queue);

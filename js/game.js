@@ -973,6 +973,7 @@
     if (!u || this.phase !== 'aim' || u.airborne || u.fuel <= 0) return;
     if (u.stunned > 0) { if ((this.t & 31) === 0) this.say('被麻痹了，动不了'); return; }
     u.face = dir;
+    if (!u.ai) this.cam.free = false;                 // 自己开车了，镜头跟回来
     var cost = u.vehicle.moveCost;
     if (this.arc) cost *= this.moveMul(u);            // 陷在蛛网里
     // 还打得出一号武器就给它留着，已经打不出了就随便走——总不能把人钉在原地
@@ -1003,6 +1004,10 @@
   /** 每帧处理「按住不放」的按键；keys 是 {按键名: 布尔} */
   Game.prototype.applyHeld = function (keys) {
     var u = this.active;
+    // WASD 挪镜头：谁的回合都能用（看的是公开的战场，不算规则）。认 code 也认 key，输入法开着时 key 不可靠
+    var px = (keys.KeyD || keys.d || keys.D ? 1 : 0) - (keys.KeyA || keys.a || keys.A ? 1 : 0);
+    var py = (keys.KeyS || keys.s || keys.S ? 1 : 0) - (keys.KeyW || keys.w || keys.W ? 1 : 0);
+    if (px || py) this.panCamera(px * 18, py * 18);
     if (u && u.ai && this.preUnit()) {                 // 电脑的回合：只许预先调角度
       if (keys.ArrowUp) this.adjustAim(1);
       if (keys.ArrowDown) this.adjustAim(-1);
@@ -1057,6 +1062,7 @@
     if (!this.active || this.phase !== 'aim' || this.charging) return;
     this.charging = true;
     this.active.power = 0;
+    this.cam.free = false;               // 要开炮了，镜头回到自己车上
     RZ.SFX.startCharge();
   };
 
@@ -1261,8 +1267,20 @@
     }
   };
 
+  /**
+   * 玩家手动挪镜头。挪过之后镜头就停在那儿不再跟车，直到「该看别处了」：
+   * 换人出手、炮弹出膛 / 落定（阶段变了），或者玩家自己开始移动、蓄力。
+   */
+  Game.prototype.panCamera = function (dx, dy) {
+    if (this.result !== null) return;
+    this.cam.free = true;
+    this.cam.tx += dx; this.cam.ty += dy;
+  };
+
   Game.prototype.updateCamera = function () {
     var target = null;
+    var sig = (this.active ? this.active.index : -1) + '|' + this.phase;
+    if (sig !== this.cam.sig) { this.cam.sig = sig; this.cam.free = false; }
     if (this.phase === 'fly' && this.projectiles.length) {
       var best = this.projectiles[0];
       for (var i = 1; i < this.projectiles.length; i++) {
@@ -1272,7 +1290,7 @@
     } else if (this.active) {
       target = { x: this.active.x, y: this.active.y - 60 };
     }
-    if (target) {
+    if (target && !this.cam.free) {
       this.cam.tx = target.x - this.viewW / 2;
       this.cam.ty = target.y - this.viewH / 2;
     }
