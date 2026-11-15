@@ -497,6 +497,11 @@ body.touch-mode .hud-bottom-left { bottom: 82px; }
   background: var(--paper); border: 2.5px solid var(--ink); border-bottom-width: 6px;
 }
 /* 当前行动的那辆：整块翻成黄色并抬起来。阵营色留在下边那道粗线上（内联 border-color） */
+/* 这场战斗的特殊规矩：地图词条、限时挑战。排在出手顺序后面，另起一行 */
+.queue em { flex-basis: 100%; height: 0; }
+.queue u { text-decoration: none; font-family: var(--display); font-size: 14px; padding: 1px 8px 2px; color: var(--ink);
+  background: var(--yellow); border: 2.5px solid var(--ink); }
+.queue u.hot { background: var(--red); color: var(--paper); }
 .queue span.now { background: var(--yellow); box-shadow: 3px 3px 0 var(--ink); transform: translate(-1px, -2px); }
 
 /* ============================================================
@@ -599,6 +604,15 @@ body.touch-mode .hud-bottom-left { bottom: 82px; }
 .node.boss h4 { background: var(--red); font-size: 34px; }
 .node.shop h4, .node.rest h4 { background: #4f9a35; }
 .node.event h4 { background: #6b4fa0; }
+.node.trial h4 { background: var(--red); }
+.node.chest h4 { background: var(--yellow); color: var(--ink); }
+.node.altar h4 { background: var(--ink); color: var(--yellow); }
+/* 节点上的地图词条 / 限时：黄底小标签带一句说明 */
+.node-body .node-mod, .node-body .foe-note { font-size: 12.5px; line-height: 1.6; color: var(--ink-soft); }
+.node-mod b { font-family: var(--display); font-weight: 400; font-size: 14px; color: var(--ink); background: var(--yellow);
+  border: 2px solid var(--ink); padding: 0 6px 1px; margin-right: 7px; white-space: nowrap; }
+.node-mod.hot b { background: var(--red); color: var(--paper); }
+.foe-note { padding-left: 8px; border-left: 3px solid var(--ink-dim); }
 .node-body { flex: 1; display: grid; gap: 10px; align-content: start; padding: 14px; }
 .node-body p { font-size: 14px; color: var(--ink-soft); line-height: 1.7; }
 .node-foot { margin: 0 14px; padding: 9px 0 12px; border-top: 2.5px solid var(--ink); font-size: 12.5px; color: var(--ink-soft); }

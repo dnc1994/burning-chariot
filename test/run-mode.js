@@ -1050,6 +1050,259 @@ module.exports = function runModeTests(RZ, check, head) {
     check(w.over && w.won && Run.loadMeta().asc === 1, '打穿三个区域 = 通关，开放进阶 1');
   }
 
+  // ================= v1.4 世界变大 =================
+  // 直接给 Game 一份词条 / 限时，不经过远征
+  const modGame = (mods, extra) => {
+    const g = new RZ.Game(Object.assign({ mapId: 'dry', arcade: true, barrels: 0, humanTeam: 0, mods, roster: [
+      { vehicle: V('liehuo'), team: 0, ai: false, name: '我', perks: {} },
+      { vehicle: V('honglong'), team: 1, ai: true, name: '敌', perks: {} }] }, extra || {}));
+    const floor = flatten(g); g.wind = 0;
+    g.units[0].x = 300; g.units[1].x = 1500;
+    g.units.forEach((u) => { u.y = floor; u.airborne = false; u.lastSeenX = u.x; u.lastSeenY = u.y; });
+    return g;
+  };
+  const foe = (over) => Object.assign({ vid: 'honglong', name: '红龙', hpMul: 0.6, atkMul: 0.6, mods: { w1: [], w2: [], ss: [] }, perks: {} }, over || {});
+  const runBattle = (enemies, node) => {
+    const s = Run.newRun('liehuo');
+    s.node = Object.assign({ type: 'fight', mapId: 'dry', enemies, gold: 20 }, node || {});
+    return { s, g: new RZ.Game(Run.battleOpts(s)) };
+  };
+
+  head('v1.4：地图词条');
+  {
+    const dry = RZ.mapById('dry'), w0 = dry.windMax, g0 = dry.gravity;
+    const gale = modGame(['gale']), low = modGame(['lowg']), plain = modGame([]);
+    check(gale.map.windMax === Math.max(8, Math.round(w0 * 1.8)) && low.map.gravity < g0 * 0.7, '大风抬高风力上限，低重力压低重力');
+    check(dry.windMax === w0 && dry.gravity === g0 && plain.map === dry, '改的是这一局的副本，RZ.MAPS 原件没动');
+    const classic = new RZ.Game({ mapId: 'dry', mods: ['gale', 'night', 'meteor'], roster: [
+      { vehicle: V('liehuo'), team: 0, ai: false, name: 'a' }, { vehicle: V('honglong'), team: 1, ai: true, name: 'b' }] });
+    check(classic.mods.length === 0 && classic.map === dry && !classic.dark && classic.hudState().tags.length === 0, '经典规则不吃词条');
+    check(gale.hudState().tags.map((t) => t.text).join() === '大风', '词条显示在战斗界面上');
+    // 低重力：射程差不多，滞空明显变长（预览线跑的就是真实弹道，拿它量）
+    const fly = (g) => {
+      const u = g.units[0];
+      g.guide = true; g.active = u; g.phase = 'aim'; u.aim = 45; u.markPower = 60; u.perks = { scope: 1 };
+      const path = g.previewPath();
+      return { frames: path.length / 2, range: path[path.length - 2] - path[0] };
+    };
+    const a = fly(plain), b = fly(low);
+    check(b.frames > a.frames * 1.2 && Math.abs(b.range - a.range) / a.range < 0.15, '低重力：飞得更久，射程基本不变', `${a.frames}→${b.frames} 帧，${Math.round(a.range)}→${Math.round(b.range)}px`);
+    // 大风：风真的刮得更大
+    let peak = 0;
+    for (let i = 0; i < 400; i++) { gale.stepWind(); peak = Math.max(peak, Math.abs(gale.wind)); }
+    check(peak > w0 * 1.1, '大风：刮得出平时没有的风', `峰值 ${peak.toFixed(1)}，平时上限 ${w0}`);
+    check(Object.keys(RZ.MAP_MODS).length === 4, '四种词条', Object.keys(RZ.MAP_MODS).join(' '));
+  }
+
+  head('v1.4：夜战');
+  {
+    const g = modGame(['night']);
+    const me = g.units[0], en = g.units[1];
+    check(g.dark && g.hiddenFrom(0, en) && g.hiddenFrom(1, me), '离得远、没被照亮：双方互相看不见');
+    check(!g.hiddenFrom(0, me), '自己人永远看得见');
+    en.x = 1200; g.update(16);
+    check(g.knownPos(0, en).x === 1500, '它挪了位置，我只知道最后看见它的地方', `以为在 ${g.knownPos(0, en).x}，其实在 ${en.x}`);
+    // 火光照亮
+    g.explode(en.x + 120, en.y - 10, V('liehuo').w1, me, null, 1);
+    g.update(16);
+    check(!g.hiddenFrom(0, en) && g.knownPos(0, en).x === en.x, '炮弹落在它附近：火光照出了它');
+    const litX = en.x;
+    g.turnNo++;
+    check(g.hiddenFrom(0, en), '过了这一回合又看不见了');
+    en.x = litX - 200; g.update(16);
+    check(g.knownPos(0, en).x === litX, '但记住了它被照亮时的位置');
+    // 靠近
+    en.x = me.x + 300; g.update(16);
+    check(!g.hiddenFrom(0, en) && !g.hiddenFrom(1, me), '离得近（420px 内）互相看得见');
+    en.x = 1500; g.update(16); g.turnNo++;
+    check(g.hiddenFrom(0, en), '拉开距离又丢了');
+    // 地火
+    g.addHazard('fire', en.x + 40, en.y, 60, 2, 30, me);
+    check(!g.hiddenFrom(0, en), '站在地火旁边会被照亮');
+    g.hazards.length = 0;
+    // 挨打
+    g.turnNo++;
+    check(g.hiddenFrom(0, en), '火灭了又看不见');
+    g.damage(en, 10, me);
+    check(!g.hiddenFrom(0, en), '挨了打就暴露');
+    // 开炮不暴露
+    const h = modGame(['night']);
+    h.active = h.units[1]; h.phase = 'aim'; h.units[1].fuel = 100; h.units[1].aim = 80; h.units[1].power = 30;
+    h.fire();
+    check(h.hiddenFrom(0, h.units[1]), '开炮不会暴露位置（只看得到炮弹从哪飞出来）');
+  }
+
+  head('v1.4：陨石雨');
+  {
+    const g = modGame(['meteor']);
+    const marks = g.telegraphs.filter((t) => t.strike === 'meteor');
+    check(marks.length === 2 && marks.every((t) => t.owner === null), '每一轮开头圈两块地', `${marks.length} 块`);
+    check(g.dangerAt(marks[0].x, 300), '陨石的警戒线算危险地带（电脑会躲）');
+    const xs = marks.map((t) => t.x);
+    g.armTelegraphs(g.units[0]);
+    check(g.pendingBlasts.length === 0, '这一轮里不会落');
+    const solid = (t) => { let n = 0; for (let i = 0; i < t.mask.length; i++) n += t.mask[i]; return n; };
+    const before = solid(g.terrain);
+    g.startRound();
+    check(g.pendingBlasts.length === 2 && g.telegraphs.length === 2 && g.telegraphs.every((t) => xs.indexOf(t.x) < 0), '下一轮开头：上一轮圈的落下来，再圈两块新的');
+    settle(g, 200);
+    check(solid(g.terrain) < before, '陨石真的砸出了坑');
+    // 砸到谁算谁
+    const k = modGame(['meteor']);
+    k.telegraphs.length = 0;
+    k.telegraphs.push({ x: k.units[1].x, r: 62, owner: null, armed: true, strike: 'meteor', power: 95, born: 0, seed: 0 });
+    const hp0 = k.units[1].hp;
+    k.resolveTelegraphs(null); settle(k, 200);
+    check(k.units[1].hp < hp0, '陨石不分敌我，砸到谁算谁', `-${Math.round(hp0 - k.units[1].hp)}`);
+  }
+
+  head('v1.4：新敌人');
+  {
+    const st = Run.newRun('liehuo'); st.act = 1; st.step = 3;
+    const find = (kind) => { for (let i = 0; i < 800; i++) for (const layer of Run.genLayers(st)) for (const n of layer) if (n.enemies && n.enemies.some((e) => e.kind === kind)) return n; };
+    const tn = find('turret'), sn = find('swarm'), bn = find('bomber');
+    check(tn && sn && bn, '路线上会刷出炮台、小车群、自爆车');
+    check(sn.enemies.length >= 3 && sn.enemies.every((e) => e.kind === 'swarm'), '小车群至少三辆', `${sn.enemies.length} 辆`);
+
+    // 炮台
+    {
+      const { g } = runBattle(tn.enemies);
+      const t = g.units.find((u) => u.perks.rooted);
+      check(t.vehicle.art === 'turret' && t.vehicle.tag === '固定炮台', '炮台有自己的样子');
+      g.active = t; g.phase = 'aim'; t.fuel = 100;
+      const x0 = t.x; for (let i = 0; i < 30; i++) g.moveActive(1);
+      check(t.x === x0, '炮台挪不动');
+      const vx0 = t.vx || 0;
+      g.explode(t.x - 20, t.y - 10, V('liehuo').w1, g.units[0], null, 1);
+      check((t.vx || 0) === vx0, '炮台掀不走');
+      check(V(tn.enemies[0].vid).art !== 'turret', '原始战车数据没被改');
+    }
+    // 小车：只打一号武器、个头小
+    {
+      const { g } = runBattle(sn.enemies);
+      const c = g.units[1];
+      c.fuel = 200;
+      check(!c.canAfford(c.vehicle.w2) && !c.canAfford(c.vehicle.ss) && c.canAfford(c.vehicle.w1) && c.scale < 1, '小车只打得出一号武器，个头也小');
+      const same = [foe({ kind: 'swarm' }), foe({ kind: 'swarm' }), foe({ kind: 'swarm' })];
+      const names = runBattle(same).g.units.slice(1).map((u) => u.name);
+      check(names.join() === '红龙,红龙·2,红龙·3', '同名的敌人按顺序编号', names.join(' '));
+    }
+    // 自爆车
+    {
+      const { g } = runBattle([foe({ kind: 'bomber', vid: 'liehuo', name: '自爆车', perks: { kamikaze: 1 } })]);
+      const floor = flatten(g); g.wind = 0;
+      const me = g.units[0], b = g.units[1];
+      me.x = 400; b.x = 900; [me, b].forEach((u) => { u.y = floor; u.airborne = false; });
+      check(b.vehicle.art === 'bomb', '自爆车有自己的样子');
+      g.active = b; g.phase = 'aim'; g.aiTimer = 0;
+      let n = 0; while (g.phase === 'aim' && n++ < 400) g.updateAI();
+      const d1 = b.x;
+      check(d1 < 900 - 150 && d1 > 400 && b.alive && !b.firedThisTurn, '自爆车不开炮，一回合朝玩家开一大段', `900 → ${Math.round(d1)}`);
+      // 接下来几个回合：贴上就炸
+      const hp0 = me.hp;
+      for (let turn = 0; turn < 4 && b.alive; turn++) {
+        g.active = b; g.phase = 'aim'; g.aiTimer = 0; b.kamiLeft = null;
+        n = 0; while (g.phase === 'aim' && b.alive && n++ < 400) g.updateAI();
+      }
+      check(!b.alive && me.hp < hp0, '贴上玩家就引爆，自己也没了', `玩家 -${Math.round(hp0 - me.hp)}`);
+      check(g.pendingBlasts.every((p) => p.w.name !== '殉爆'), '自己引爆的不会再殉爆一次');
+    }
+    {
+      // 打死自爆车：原地殉爆，炸到它的同伙
+      const { g } = runBattle([foe({ kind: 'bomber', vid: 'liehuo', name: '自爆车', perks: { kamikaze: 1 } }), foe()]);
+      const floor = flatten(g); g.wind = 0;
+      const me = g.units[0], b = g.units[1], pal = g.units[2];
+      me.x = 300; b.x = 1200; pal.x = 1250; g.units.forEach((u) => { u.y = floor; u.airborne = false; });
+      const hp0 = pal.hp;
+      g.damage(b, 99999, me);
+      settle(g, 120);
+      check(!b.alive && pal.hp < hp0, '打死自爆车会原地殉爆，炸到它旁边的同伙', `同伙 -${Math.round(hp0 - pal.hp)}`);
+    }
+    {
+      // 自爆车不往悬崖下开
+      const { g } = runBattle([foe({ kind: 'bomber', vid: 'liehuo', name: '自爆车', perks: { kamikaze: 1 } })], { mapId: 'sky' });
+      const b = g.units[1];
+      for (let turn = 0; turn < 6 && b.alive; turn++) {
+        g.active = b; g.phase = 'aim'; g.aiTimer = 0; b.kamiLeft = null;
+        let n = 0; while (g.phase === 'aim' && b.alive && n++ < 400) { g.updateAI(); g.update(16); }
+        settle(g, 60);
+      }
+      check(b.alive || b.bombed, '浮岛上的自爆车不会自己开下悬崖（要么还活着，要么是贴上去炸的）');
+    }
+  }
+
+  head('v1.4：新节点');
+  {
+    // 限回合挑战
+    const { s, g } = runBattle([foe()], { type: 'trial', limit: 3 });
+    check(g.roundLimit === 3 && g.hudState().tags[0].text.indexOf('限时') === 0, '限时挑战显示打到第几轮', g.hudState().tags[0].text);
+    for (let f = 0; f < 40000 && g.result === null; f++) {
+      g.update(16);
+      if (g.phase === 'aim') { g.aiTimer = 9999; g.passTurn(); }
+    }
+    check(g.trialFailed && g.result === 0 && g.round === 4, '轮数打完没全歼：战斗结束，不算输', `第 ${g.round} 轮`);
+    const gold0 = s.gold, relics0 = s.relics.length;
+    Run.afterBattle(s, g);
+    check(!s.over && s.pending.kind === 'note' && s.gold === gold0 && s.relics.length === relics0, '超时没有奖励，远征继续');
+    check(Run.leave(s) && s.step === 1, '看完提示往前走一层');
+    const win = runBattle([foe()], { type: 'trial', limit: 3 });
+    win.g.units[1].alive = false; win.g.units[1].hp = 0; win.g.checkWin();
+    Run.afterBattle(win.s, win.g);
+    const ch = win.s.pending.choices;
+    check(win.s.pending.kind === 'reward' && ch.filter((c) => c.type === 'relic').length === 2 && Run.modById(ch[2].id).rare, '限时内打赢：拿精英级奖励（两件稀有遗物 + 稀有改造）');
+    check(Run.isBattle({ type: 'trial' }) && !Run.isBattle({ type: 'chest' }) && !Run.isBattle({ type: 'altar' }), '限时挑战要打，宝箱和祭坛不用');
+
+    // 宝箱
+    const c = Run.newRun('liehuo');
+    c.layers[c.step] = [{ type: 'chest' }];
+    const g0 = c.gold;
+    check(Run.enter(c, 0) === false && c.pending.kind === 'reward' && c.pending.from === 'chest' && c.gold > g0 && c.pending.choices.length === 2, '宝箱：白拿一笔金币，再二选一', `+${c.gold - g0} 金币`);
+    const pickIdx = c.pending.choices.findIndex((x) => x.type === 'relic');
+    check(Run.takeReward(c, pickIdx) && c.relics.length === 1 && c.step === 1, '拿了东西往前走');
+
+    // 诅咒祭坛
+    const a = Run.newRun('liehuo');
+    a.layers[a.step] = [{ type: 'altar' }];
+    Run.enter(a, 0);
+    const ev = Run.eventById(a.pending.id);
+    check(a.pending.kind === 'event' && ev.id === 'altar' && Run.EVENTS.indexOf(ev) < 0, '祭坛是专门的节点，不进随机事件池');
+    check(!Run.canChoose(a, ev.options[2]) && Run.canChoose(a, ev.options[3]), '没有诅咒时不能净化；随时可以转身走');
+    const hpMax = Run.maxHp(a);
+    Run.eventChoose(a, 0);
+    check(Run.maxHp(a) <= hpMax - 80 && a.relics.length === 1 && Run.relicById(a.relics[0]).rarity === 'rare', '献上装甲：最大耐久 -80，换一件稀有遗物');
+    const b2 = Run.newRun('liehuo'); b2.pending = { kind: 'event', id: 'altar' };
+    Run.eventChoose(b2, 1);
+    const mods = b2.mods.w1.concat(b2.mods.w2);
+    check(Run.curses(b2).length === 1 && mods.length === 1 && Run.modById(mods[0]).rare && b2.gold === 80, '接受诅咒：一件诅咒遗物，换稀有改造 + 50 金币');
+    b2.pending = { kind: 'event', id: 'altar' };
+    Run.eventChoose(b2, 2);
+    check(Run.curses(b2).length === 0, '净化：把诅咒洗掉');
+
+    // 路线生成
+    const types = {};
+    for (let i = 0; i < 300; i++) { const t = Run.newRun('liehuo'); t.layers.forEach((L) => L.forEach((n) => { types[n.type] = (types[n.type] || 0) + 1; })); }
+    check(types.trial > 20 && types.chest > 5 && types.altar > 20, '路线上会出现限时挑战、宝箱、祭坛', JSON.stringify(types));
+    let early = 0, bossMods = 0;
+    for (let i = 0; i < 200; i++) {
+      const t = Run.newRun('liehuo');
+      t.layers[0].forEach((n) => { if ((n.mods && n.mods.length) || n.enemies.some((e) => e.kind)) early++; });
+      if (t.layers[4][0].mods && t.layers[4][0].mods.length) bossMods++;
+    }
+    check(early === 0 && bossMods === 0, '开局第一层没有词条和特殊敌人；Boss 战不带词条');
+    // 低重力的图不叠低重力
+    let bad = 0;
+    for (let i = 0; i < 300; i++) {
+      const t = Run.newRun('liehuo'); t.act = 1 + (i % 2); t.layers = Run.genLayers(t);
+      t.layers.forEach((L) => L.forEach((n) => { if (n.mods && n.mods.indexOf('lowg') >= 0 && RZ.mapById(n.mapId).gravity < 0.34) bad++; }));
+    }
+    check(bad === 0, '本来就低重力的图不会再叠「低重力」');
+    // 老存档的节点没有 mods / limit / kind
+    const old = Run.newRun('liehuo');
+    old.node = { type: 'fight', mapId: 'dry', enemies: [foe()], gold: 10 };
+    const og = new RZ.Game(Run.battleOpts(old));
+    check(og.mods.length === 0 && og.roundLimit === 0, 'v1.3 存档里的节点（没有词条字段）照样能打');
+  }
+
   head('远征：电脑代打跑完整局');
   {
     Run.saveMeta({ medals: 0, unlocked: Run.STARTERS.slice(), asc: 0, wins: 0, runs: 0, best: 0 });

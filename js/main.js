@@ -551,13 +551,20 @@
         : '← → 移动　↑ ↓ 角度　空格 蓄力发射　Enter 跳过　WASD 看别处'));
 
     // 出手队列（经典规则下 h.queue 恒为 null，这块始终隐藏）
-    setHidden('queue', !h.queue);
-    if (h.queue) {
-      var qh = '<i>出手顺序</i>';
-      for (i = 0; i < h.queue.length; i++) {
-        qh += '<span class="' + (i === 0 ? 'now' : '') + '" style="border-color:' +
-          RZ.TEAM_COLORS[h.queue[i].team] + '">' + h.queue[i].name + '</span>';
+    // 词条 / 限时挑战的标签跟在后面（硬核关掉了出手顺序，标签照样要给——那是这场的规矩，不是情报）
+    var tags = h.tags || [];
+    setHidden('queue', !h.queue && !tags.length);
+    if (h.queue || tags.length) {
+      var qh = '';
+      if (h.queue) {
+        qh = '<i>出手顺序</i>';
+        for (i = 0; i < h.queue.length; i++) {
+          qh += '<span class="' + (i === 0 ? 'now' : '') + '" style="border-color:' +
+            RZ.TEAM_COLORS[h.queue[i].team] + '">' + h.queue[i].name + '</span>';
+        }
+        if (tags.length) qh += '<em></em>';
       }
+      for (i = 0; i < tags.length; i++) qh += '<u class="' + (tags[i].hot ? 'hot' : '') + '">' + tags[i].text + '</u>';
       setHTML('queue', qh);
     }
 
@@ -772,6 +779,7 @@
     var title = $('result-title');
     if (game.result === -1) { title.textContent = '同归于尽'; title.style.color = '#e2cd9c'; }
     else if (human == null) { title.textContent = RZ.TEAM_NAMES[game.result] + '获胜'; title.style.color = RZ.TEAM_COLORS[game.result]; }
+    else if (game.trialFailed) { title.textContent = '时间到'; title.style.color = '#e2cd9c'; }
     else if (game.result === human) { title.textContent = '胜　利'; title.style.color = '#f5b921'; }
     else { title.textContent = '战　败'; title.style.color = '#d8361f'; }
 

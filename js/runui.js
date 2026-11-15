@@ -17,7 +17,8 @@
   var bk = { mode: null, text: '', msg: '', pending: null, raw: '' };
 
   var SLOT_NAMES = { w1: '一号武器', w2: '二号武器', ss: '必杀' };
-  var NODE_NAMES = { fight: '战斗', elite: '精英战', boss: 'BOSS', shop: '商店', rest: '修整', event: '未知事件' };
+  var NODE_NAMES = { fight: '战斗', elite: '精英战', boss: 'BOSS', shop: '商店', rest: '修整', event: '未知事件',
+    trial: '限时挑战', chest: '宝箱', altar: '诅咒祭坛' };
   var PERK_TAGS = { armor: '厚甲', thorns: '反伤', repair: '自修复', crit: '暴击', anchor: '不可击飞', aftershock: '余震' };
 
   function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -48,6 +49,7 @@
         '<li>三个区域，每个区域五层，最后一层是 <b>Boss</b>。耐久带进下一场，输一场就结束。</li>' +
         '<li>每场打赢<b>三选一</b>：武器改造可以反复叠，遗物是全局被动——叠出你自己的流派。</li>' +
         '<li>每辆车有一个只在远征里生效的<b>被动</b>；成对的遗物凑齐会触发<b>联动</b>。</li>' +
+        '<li>有的战场带<b>词条</b>（大风、夜战、陨石雨……），有的敌人不是战车——选去处时卡片上都写着。</li>' +
         '<li>爆炸会把战车<b>掀飞</b>，油桶一点就<b>连锁</b>；打得漂亮有额外赏金。</li></ul></div>' +
       '<div class="panel"><div class="veh-detail">' + App.detailHTML(v) + '</div>' + passiveHTML(v.id) +
         '<h3 class="panel-h">难度</h3><div class="chips">' + ascChips + '</div>' +
@@ -194,17 +196,52 @@
       (e.mods[k] || []).forEach(function (m) { var d = Run.modById(m); if (d && tags.indexOf(d.name) < 0) tags.push(d.name); });
     });
     for (var k in (e.perks || {})) if (PERK_TAGS[k] && k !== 'anchor') tags.push(PERK_TAGS[k]);
-    return '<div class="foe"><span data-portrait="' + e.vid + '"></span><div><b>' + esc(e.name) + '</b>' +
-      '<small>' + RZ.vehicleById(e.vid).tag + ' · 耐久 ' + v.hp + ' · 攻击 ' + v.atk + '</small>' +
+    return '<div class="foe"><span data-portrait="' + e.vid + '"' + (e.kind ? ' data-kind="' + e.kind + '"' : '') + '></span><div><b>' + esc(e.name) + '</b>' +
+      '<small>' + v.tag + ' · 耐久 ' + v.hp + ' · 攻击 ' + v.atk + '</small>' +
       (tags.length ? '<small class="foe-tags">' + tags.join(' · ') + '</small>' : '') + '</div></div>';
+  }
+
+  /** 一个节点里的敌人：同名同款的并成一行「× 3」，特殊敌人后面跟一句它的规矩 */
+  function foesHTML(node) {
+    var out = '', seen = {}, notes = '';
+    node.enemies.forEach(function (e) {
+      var key = e.kind === 'swarm' || e.kind === 'bomber' ? e.kind : null;
+      if (key && seen[key]) return;
+      if (key) {
+        seen[key] = true;
+        var n = node.enemies.filter(function (x) { return x.kind === key; }).length;
+        var kd = Run.FOE_KINDS[key], v = Run.enemyVehicle(e);
+        out += '<div class="foe"><span data-portrait="' + e.vid + '" data-kind="' + key + '"></span><div><b>' + kd.name + ' × ' + n + '</b>' +
+          '<small>每辆耐久 ' + v.hp + ' · 攻击 ' + v.atk + '</small></div></div>';
+      } else out += enemyLine(e);
+      if (e.kind && notes.indexOf(Run.FOE_KINDS[e.kind].note) < 0) notes += '<p class="foe-note">' + Run.FOE_KINDS[e.kind].note + '</p>';
+    });
+    return out + notes;
+  }
+
+  /** 节点上的地图词条 / 限时：一排小标签 + 一句说明 */
+  function modsHTML(node) {
+    var out = '';
+    (node.mods || []).forEach(function (id) {
+      var m = RZ.MAP_MODS[id];
+      if (m) out += '<p class="node-mod"><b>' + m.name + '</b>' + m.desc + '</p>';
+    });
+    if (node.limit) out += '<p class="node-mod hot"><b>限 ' + node.limit + ' 轮</b>' + node.limit + ' 轮之内全歼才有奖励；超时敌人撤走，不算输。</p>';
+    return out;
   }
 
   function nodeCard(node, i) {
     var body = '', foot = '';
     if (node.enemies) {
-      node.enemies.forEach(function (e) { body += enemyLine(e); });
+      body = foesHTML(node) + modsHTML(node);
       foot = mapName(node.mapId) + ' · 金币 ' + node.gold + '+ · ' +
-        (node.type === 'boss' ? 'Boss 遗物 + 大修' : node.type === 'elite' ? '稀有遗物二选一 + 改造' : '改造 / 遗物三选一');
+        (node.type === 'boss' ? 'Boss 遗物 + 大修' : node.type === 'elite' || node.type === 'trial' ? '稀有遗物二选一 + 稀有改造' : '改造 / 遗物三选一');
+    } else if (node.type === 'chest') {
+      body = '<p>一只没人看着的箱子。白拿一笔金币，再从两样东西里挑一样。</p>';
+      foot = '不用打';
+    } else if (node.type === 'altar') {
+      body = '<p>拿装甲换稀有遗物，背一件诅咒换稀有改造，或者把身上的诅咒洗掉。</p>';
+      foot = '不用打 · 也可以什么都不做';
     } else if (node.type === 'shop') {
       body = '<p>花金币买遗物、改造、道具，或者修车。</p>';
       foot = '你有 ' + state.gold + ' 金币';
@@ -269,7 +306,7 @@
     var p = state.pending, h = '', i;
     if (p.kind === 'reward') {
       for (i = 0; i < p.choices.length; i++) h += offerCard(p.choices[i], i, 'reward');
-      return '<div class="run-main"><h3 class="run-title">' + (p.from === 'boss' ? 'Boss 击破！' : '战斗胜利') +
+      return '<div class="run-main"><h3 class="run-title">' + (p.from === 'boss' ? 'Boss 击破！' : p.from === 'chest' ? '宝箱' : p.from === 'trial' ? '挑战成功' : '战斗胜利') +
         '<small>金币 +' + p.gold + (p.style ? '（含花式赏金 ' + p.style + '）' : '') + ' · 三选一</small></h3>' +
         '<div class="offers">' + h + '</div>' +
         '<button class="btn btn-ghost run-skip" data-act="skip">都不要（换 15 金币）</button></div>';
@@ -336,6 +373,8 @@
     var spots = root.querySelectorAll('[data-portrait]');
     for (var i = 0; i < spots.length; i++) {
       var v = RZ.vehicleById(spots[i].getAttribute('data-portrait'));
+      var fk = Run.FOE_KINDS[spots[i].getAttribute('data-kind')];
+      if (fk && fk.art) { v = Object.create(v); v.art = fk.art; v.pal = fk.pal; }   // 炮台 / 自爆车有自己的画法
       var big = spots[i].parentNode.classList.contains('veh-card');
       spots[i].appendChild(big ? App.portrait(v, 100, 62, 0.82) : App.portrait(v, 64, 44, 0.56));
     }

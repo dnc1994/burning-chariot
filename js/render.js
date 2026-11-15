@@ -594,6 +594,47 @@
     ctx.restore();
   };
 
+  // ---- 远征里的特殊敌人（v1.4）：不在 RZ.VEHICLES 里，run.js 克隆敌人时把 art 换成这两个 ----
+  /** 固定炮台：沙袋垒的底座 + 铆钉铁罩。没有轮子——它不会动 */
+  ART.turret = function (ctx, p, u, t) {
+    // 底座：两层沙袋
+    for (var i = -1; i <= 1; i++) { roundRect(ctx, i * 17 - 9, -9, 18, 9, 4); ink(ctx, p[3], 2.5); }
+    roundRect(ctx, -18, -17, 17, 9, 4); ink(ctx, p[3], 2.5);
+    roundRect(ctx, 1, -17, 17, 9, 4); ink(ctx, p[3], 2.5);
+    // 铁罩
+    ctx.beginPath(); ctx.arc(0, -17, 15, Math.PI, 0); ctx.closePath(); ink(ctx, p[0]);
+    ctx.beginPath(); ctx.arc(0, -17, 15, Math.PI * 1.5, 0); ctx.lineTo(0, -17); ctx.closePath(); ctx.fillStyle = p[1]; ctx.fill();
+    ctx.beginPath(); ctx.arc(0, -17, 15, Math.PI, 0); ctx.closePath(); ctx.lineWidth = 3; ctx.strokeStyle = INK; ctx.stroke();
+    for (i = -9; i <= 9; i += 6) { disc(ctx, i, -20 - (9 - Math.abs(i)) * 0.5, 1.5); ctx.fillStyle = INK; ctx.fill(); }
+    // 观察缝
+    ctx.fillStyle = INK; ctx.fillRect(2, -27, 9, 3);
+    // 顶上的小旗
+    ctx.beginPath(); ctx.moveTo(-6, -31); ctx.lineTo(-6, -44); ctx.lineWidth = 2.5; ctx.strokeStyle = INK; ctx.stroke();
+    var wv = Math.sin(t * 0.008) * 1.5;
+    poly(ctx, [-6, -44, 5, -41 + wv, -6, -37]); ink(ctx, p[2], 2);
+  };
+
+  /** 自爆车：一辆小板车驮着一个大炸药桶，引信在冒火星。没有炮管（barrel() 照画，被桶挡住） */
+  ART.bomb = function (ctx, p, u, t) {
+    // 板车
+    roundRect(ctx, -19, -13, 38, 7, 2); ink(ctx, p[3], 2.5);
+    wheel(ctx, -11, -6, 6.5, spinOf(u), p[2]);
+    wheel(ctx, 11, -6, 6.5, spinOf(u), p[2]);
+    // 炸药桶
+    roundRect(ctx, -14, -41, 28, 29, 6); ink(ctx, p[0]);
+    ctx.fillStyle = p[1]; ctx.fillRect(-13, -34, 26, 4); ctx.fillRect(-13, -22, 26, 4);
+    roundRect(ctx, -14, -41, 28, 29, 6); ctx.lineWidth = 3; ctx.strokeStyle = INK; ctx.stroke();
+    // 骷髅：两只眼一张嘴，够认了
+    disc(ctx, 0, -28, 6.5); ink(ctx, PAPER, 2);
+    disc(ctx, -2.5, -29, 1.6); ctx.fillStyle = INK; ctx.fill();
+    disc(ctx, 2.5, -29, 1.6); ctx.fillStyle = INK; ctx.fill();
+    ctx.fillRect(-2.5, -25, 5, 1.6);
+    // 引信 + 火星（闪，不是渐变）
+    ctx.beginPath(); ctx.moveTo(4, -41); ctx.quadraticCurveTo(10, -50, 6, -54); ctx.lineWidth = 2.5; ctx.strokeStyle = INK; ctx.stroke();
+    var s = ((t / 90) | 0) % 2 ? 6 : 4.5;
+    star(ctx, 6, -55, s, s * 0.45, 6, t * 0.01); ink(ctx, YELLOW, 1.8);
+  };
+
   /** 炮管：压在车体下面，所以要先画 */
   function barrel(ctx, p, aimDeg) {
     ctx.save();
@@ -607,7 +648,7 @@
   /** 画一辆不在战场上的车（选车界面、图鉴、标题画面）：炮管 + 车体，朝右 */
   RZ.drawArt = function (ctx, vehicle, t, aimDeg) {
     ctx.lineJoin = 'round';
-    barrel(ctx, vehicle.pal, aimDeg == null ? 28 : aimDeg);
+    if (vehicle.art !== 'bomb') barrel(ctx, vehicle.pal, aimDeg == null ? 28 : aimDeg);
     (ART[vehicle.art] || ART.tank)(ctx, vehicle.pal, null, t || 0);
   };
   RZ.drawStar = function (ctx, x, y, rOut, rIn, n, rot, fill, lw) { star(ctx, x, y, rOut, rIn, n, rot); ink(ctx, fill, lw); };
@@ -628,7 +669,7 @@
     // 炮管压在车体下面，先画
     ctx.save();
     ctx.scale(u.face, 1);
-    barrel(ctx, p, u.aim);
+    if (v.art !== 'bomb') barrel(ctx, p, u.aim);       // 自爆车没有炮
     if (u.muzzleFlash > 0) {                          // 炮口火光：一颗小爆炸星
       var mf = u.muzzleFlash / 8, ma = u.aim * Math.PI / 180, md = 38 + 6 * mf;
       star(ctx, Math.cos(ma) * md, -24 - Math.sin(ma) * md, 16 * mf + 4, 7 * mf + 2, 7, t * 0.01); ink(ctx, YELLOW, 2.5);
@@ -1397,6 +1438,17 @@
     ctx.lineWidth = 13; ctx.strokeStyle = INK; ctx.stroke();
     ctx.lineWidth = 7; ctx.strokeStyle = YELLOW; ctx.stroke();
     ctx.lineWidth = 2.5; ctx.strokeStyle = PAPER; ctx.stroke();
+    ctx.restore();
+  };
+
+  /** 夜战里「最后看见它在这儿」的记号：一块带问号的纸牌子，隔一会儿闪一下 */
+  RZ.drawGhost = function (ctx, x, y, t) {
+    if (((t / 16) | 0) % 50 > 44) return;
+    ctx.save();
+    ctx.translate(x, y - 30);
+    poly(ctx, [-13, -16, 13, -16, 13, 10, 3, 10, 0, 18, -3, 10, -13, 10]); ink(ctx, PAPER, 2.5);
+    ctx.font = '22px ' + RZ.FONT; ctx.textAlign = 'center';
+    ctx.fillStyle = INK; ctx.fillText('？', 0, 5);
     ctx.restore();
   };
 

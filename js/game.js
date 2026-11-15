@@ -28,6 +28,16 @@
     dot: { type: 'fire', turns: 2, damage: 30 }
   };
 
+  // 自爆车：贴脸引爆是大的那个；被打死时殉爆是小的那个（算在打死它的人头上，跟油桶一个道理）
+  var BOMB = {
+    name: '自爆', fuel: 0, damage: 250, radius: 96, digMul: 1, count: 1, kb: 1.3, look: 'barrel',
+    shell: { r: 6, color: '#ffe08a', glow: '#ff3b1f', trail: '#ff5b2a' }
+  };
+  var BOMB_DEATH = {
+    name: '殉爆', fuel: 0, damage: 130, radius: 78, digMul: 0.9, count: 1, isBarrel: true, look: 'barrel',
+    shell: { r: 6, color: '#ffe08a', glow: '#ff3b1f', trail: '#ff5b2a' }
+  };
+
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
 
   // ================= 战车实例 =================
@@ -106,6 +116,18 @@
 
     this.arc = opts.arcade ? ARCADE : null;
     this.hardcore = !!opts.hardcore;     // 爽快规则下的硬核开关：不给弹道预览和出手队列
+    // 地图词条（远征）：大风 / 低重力改的是这一局自己的地图副本，RZ.MAPS 里的原件不动
+    this.mods = this.arc && opts.mods ? opts.mods.slice() : [];
+    if (this.mods.length) {
+      var base = this.map;
+      this.map = Object.create(base);
+      if (this.hasMod('gale')) this.map.windMax = Math.max(8, Math.round(base.windMax * 1.8));
+      if (this.hasMod('lowg')) this.map.gravity = base.gravity * 0.62;
+      if (this.hasMod('night')) this.night = 1;
+    }
+    this.dark = this.hasMod('night');    // 夜战：看不见没被照亮的敌人（见 hiddenFrom）
+    this.roundLimit = this.arc && opts.roundLimit ? opts.roundLimit : 0;   // 限回合挑战
+    this.trialFailed = false;
     this.props = [];                     // 油桶
     this.hazards = [];                   // 留在场上的区域：地火、毒池、蛛网、龙卷（field.js）
     this.telegraphs = [];                // Boss 圈出来、下回合才落地的打击（field.js）
@@ -162,11 +184,18 @@
 
     if (this.arc) this.placeProps();
     this.beginTurn(true);
+    for (i = 0; i < this.mods.length; i++) {
+      var md = RZ.MAP_MODS[this.mods[i]];
+      if (md) this.say('词条「' + md.name + '」：' + md.desc, '#8fe3d6');
+    }
+    if (this.roundLimit) this.say('限时挑战：' + this.roundLimit + ' 轮之内全歼敌人', '#ffd166');
     for (i = 0; i < this.units.length; i++) {            // Boss 战开场先说清楚它的规矩
       var kit = this.units[i].kit && RZ.BOSS_KITS[this.units[i].kit];
       if (kit && kit.intro) this.say(kit.intro, '#ffd166');
     }
   }
+
+  Game.prototype.hasMod = function (id) { return this.mods.indexOf(id) >= 0; };
 
   Game.prototype.aliveOf = function (team) {
     return this.units.filter(function (u) { return u.alive && u.team === team; });
@@ -199,7 +228,10 @@
     this.round++;
     this.roundQueue = ordered;
     this.roundQueueFirst = ordered[0];
-    if (this.arc) this.fieldRoundStart();
+    if (this.arc) {
+      this.fieldRoundStart();
+      if (this.hasMod('meteor')) this.meteorRound();
+    }
   };
 
   /**
@@ -243,6 +275,7 @@
       lastPower: view.lastPower,
       // 预览线是按哪个力度画的。经典 / 硬核没有预览，也就没有标记（null）
       mark: this.markOf(view),
+      tags: this.battleTags(),
       pre: !live && view === this.preUnit(),            // 电脑的回合，但角度 / 标记 / 武器可以先摆好
       markSet: view.markPower > 0,
       weaponIdx: view.weaponIdx,
@@ -264,6 +297,14 @@
     return out.map(function (u) { return { name: u.name, team: u.team, index: u.index }; });
   };
 
+  /** 这场战斗的特殊规矩，显示在出手顺序下面：地图词条、限时挑战还剩几轮 */
+  Game.prototype.battleTags = function () {
+    var out = [];
+    if (this.roundLimit) out.push({ text: '限时 第 ' + Math.min(this.round, this.roundLimit) + ' / ' + this.roundLimit + ' 轮', hot: this.round >= this.roundLimit });
+    for (var i = 0; i < this.mods.length; i++) if (RZ.MAP_MODS[this.mods[i]]) out.push({ text: RZ.MAP_MODS[this.mods[i]].name });
+    return out;
+  };
+
   /** 界面替谁在看：单人是玩家那一队，同屏双人就是当前行动的那一队 */
   Game.prototype.viewerTeam = function () {
     if (this.opts.humanTeam != null) return this.opts.humanTeam;
@@ -272,7 +313,30 @@
 
   /** 这辆车对某一队是不是隐身的 */
   Game.prototype.hiddenFrom = function (team, u) {
-    return u.stealth > 0 && u.team !== team;
+    if (u.team === team) return false;
+    if (u.stealth > 0) return true;
+    return this.dark && !this.litFor(team, u);
+  };
+
+  /**
+   * 夜战里 team 这一队看不看得见 u。看得见的情形只有三种：
+   *   这一回合里它被炸到 / 被爆炸的火光照到（litTurn，见 explode 和 damage）；
+   *   它离 team 的某辆车不到 420px；
+   *   它站在地火旁边。
+   * 开炮不会暴露位置——只看得到炮弹是从哪飞出来的，位置要自己推。电脑同样只能靠 knownPos()。
+   */
+  Game.prototype.litFor = function (team, u) {
+    if (u.litTurn === this.turnNo) return true;
+    var i;
+    for (i = 0; i < this.units.length; i++) {
+      var o = this.units[i];
+      if (o.alive && o.team === team && Math.abs(o.x - u.x) < 420 && Math.abs(o.y - u.y) < 420) return true;
+    }
+    for (i = 0; i < this.hazards.length; i++) {
+      var h = this.hazards[i];
+      if (h.type === 'fire' && Math.abs(h.x - u.x) < h.r + 140 && Math.abs(h.y - u.y) < 200) return true;
+    }
+    return false;
   };
 
   /**
@@ -306,6 +370,15 @@
     if (this.result !== null) return;
     var u = this.nextInRound();
     if (!u) return;
+    // 限回合挑战：规定的轮数打完还没全歼，敌人撤走——不算输，但也没有奖励
+    if (this.roundLimit && this.round > this.roundLimit) {
+      this.trialFailed = true;
+      this.result = 0;
+      this.phase = 'over';
+      this.say('时间到，敌人撤走了', '#ffb4b4');
+      RZ.SFX.lose();
+      return;
+    }
 
     this.active = u;
     this.turnNo++;
@@ -643,6 +716,12 @@
     RZ.SFX.explode({ big: radius > 64, kind: w.isBarrel ? 'gun' : RZ.lookOf(w).snd });
 
     var fake = { damage: damage, radius: radius }, hitFoes = 0, hitList = [];
+    if (this.dark) {                                     // 夜战：爆炸的火光照亮周围一圈，这一回合里看得见
+      for (var li = 0; li < this.units.length; li++) {
+        var lu = this.units[li];
+        if (lu.alive && Math.hypot(lu.x - x, lu.y - 14 - y) < radius + 190) lu.litTurn = this.turnNo;
+      }
+    }
     for (var i = 0; i < this.units.length; i++) {
       var t = this.units[i];
       if (!t.alive) continue;
@@ -967,6 +1046,7 @@
   Game.prototype.damage = function (target, amount, attacker, color, direct) {
     if (!target.alive || amount <= 0) return;
     var arc = this.arc, tpk = target.perks;
+    if (this.dark) target.litTurn = this.turnNo;         // 夜战：挨了打就暴露
     // 毒蜘蛛「蚀甲」：目标身上挂着灼烧 / 中毒时多吃伤害
     if (arc && attacker && attacker.perks.corrode && target.dots.length) amount = Math.round(amount * (1 + attacker.perks.corrode));
     if (arc && tpk.armor) amount = Math.max(1, Math.round(amount * (1 - tpk.armor)));
@@ -1008,6 +1088,10 @@
       return;
     }
     u.hp = 0; u.alive = false;
+    // 自爆车被打死：原地殉爆，算在打死它的人头上——炸到它的同伙正好
+    if (this.arc && u.perks.kamikaze && !silent && !u.bombed) {
+      this.pendingBlasts.push({ wait: 8, x: u.x, y: u.y - 12, w: BOMB_DEATH, attacker: attacker || null, mul: 1 });
+    }
     if (this.arc) {
       if (u.kit) this.clearTelegraphs(u);
       this.slowmo = 44;
@@ -1061,6 +1145,7 @@
     var u = this.active;
     if (!u || this.phase !== 'aim' || u.airborne || u.fuel <= 0) return;
     if (u.stunned > 0) { if ((this.t & 31) === 0) this.say('被麻痹了，动不了'); return; }
+    if (u.perks.rooted) { u.face = dir; return; }      // 固定炮台：只会转身
     u.face = dir;
     if (!u.ai) this.cam.free = false;                 // 自己开车了，镜头跟回来
     var cost = u.vehicle.moveCost;
@@ -1187,7 +1272,7 @@
       if (u.hitFlash > 0) u.hitFlash--;
       if (u.muzzleFlash > 0) u.muzzleFlash--;
       if (u.usedItemFlash > 0) u.usedItemFlash--;
-      if (u.stealth <= 0) { u.lastSeenX = u.x; u.lastSeenY = u.y; }
+      if (!this.hiddenFrom(1 - u.team, u)) { u.lastSeenX = u.x; u.lastSeenY = u.y; }
       if (!u.airborne) u.safeX = u.x;
     }
 
@@ -1439,10 +1524,42 @@
   };
 
   // ---- AI 驱动 ----
+  /**
+   * 自爆车的回合：不开炮，朝它以为的敌人位置开，贴上去就炸。一回合最多开 150 帧（约 250px），
+   * 前面是悬崖或爬不上去就停下等下一回合。走的是 knownPos()，夜战 / 隐身时一样会扑空。
+   */
+  Game.prototype.kamikazeStep = function (u) {
+    if (u.airborne) return;
+    var foe = null, best = 1e9, i;
+    for (i = 0; i < this.units.length; i++) {
+      var o = this.units[i];
+      if (!o.alive || o.team === u.team) continue;
+      var p = this.knownPos(u.team, o), d = Math.abs(p.x - u.x);
+      if (d < best) { best = d; foe = p; }
+    }
+    if (!foe) { this.passTurn(); return; }
+    if (best < 52 && Math.abs(foe.y - u.y) < 70) {      // 贴上了：引爆，自己也没了
+      this.fx.text(u.x, u.y - 96, '自爆！', '#ff5a5a', true);
+      u.bombed = true;                                   // 已经炸过了，kill() 里别再殉爆一次
+      this.explode(u.x, u.y - 12, BOMB, u, null, 1);
+      this.kill(u, true);
+      this.phase = 'settle'; this.settleTimer = this.arc ? this.arc.settle : 20;
+      return;
+    }
+    u.kamiLeft = u.kamiLeft == null ? 150 : u.kamiLeft;
+    var dir = foe.x > u.x ? 1 : -1, x0 = u.x;
+    var ahead = this.terrain.supportY(clamp(u.x + dir * 3, 12, RZ.WORLD_W - 12), HALF_W, u.y - u.climb - 4);
+    if (u.kamiLeft > 0 && ahead < RZ.WORLD_H + 900) this.moveActive(dir);
+    u.kamiLeft--;
+    if (u.kamiLeft <= 0 || u.x === x0) { u.kamiLeft = null; this.passTurn(); }
+  };
+
   Game.prototype.updateAI = function () {
     var u = this.active;
     if (!u || !u.ai) return;
     if (this.aiTimer > 0) { this.aiTimer--; return; }
+
+    if (u.perks.kamikaze) { this.kamikazeStep(u); return; }
 
     if (!this.aiPlan) {
       this.aiUseSupportItems(u);            // 可能直接结束回合（大回血 / 大回燃料）
@@ -1516,7 +1633,11 @@
     var viewer = this.viewerTeam();
     for (i = 0; i < this.units.length; i++) {
       var u = this.units[i];
-      if (!u.alive || this.hiddenFrom(viewer, u)) continue;   // 隐身：整辆车都不画
+      if (!u.alive) continue;
+      if (this.hiddenFrom(viewer, u)) {                       // 隐身：整辆车都不画
+        if (this.dark && u.stealth <= 0) RZ.drawGhost(ctx, u.lastSeenX, u.lastSeenY, this.t);   // 夜战：在最后看见它的地方留个问号
+        continue;
+      }
       RZ.drawUnit(ctx, u, this.t, { active: u === this.active && this.result === null });
     }
 

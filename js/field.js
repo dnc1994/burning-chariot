@@ -227,7 +227,35 @@
   };
 
   // 预告落地时用的几把「武器」。走的是普通的 explode()，所以击飞、油桶连锁、地火全都照常生效。
+  // ================= 地图词条 =================
+  // 远征里的战斗节点可能带一条。规则在 game.js（大风 / 低重力 / 夜战）和下面的 meteorRound()。
+  RZ.MAP_MODS = {
+    gale: { name: '大风', desc: '风力上限接近翻倍，一回合能变的幅度也跟着变大。' },
+    lowg: { name: '低重力', desc: '炮弹飞得更久，被击飞的车也飘得更远。' },
+    night: { name: '夜战', desc: '看不见敌人，除非它被炸到、被火光照到，或者离你很近。对面也一样。' },
+    meteor: { name: '陨石雨', desc: '每一轮开头圈出两块地，下一轮开头陨石落下，砸到谁算谁。' }
+  };
+
+  /**
+   * 陨石雨：每一轮开头，上一轮圈的先落，再圈两块新的。一轮里每辆车正好出手一次，
+   * 所以圈到谁头上，谁都有一个回合挪开。一块压在随机一辆车附近，一块纯随机——不偏袒哪一边。
+   */
+  Game.prototype.meteorRound = function () {
+    this.resolveTelegraphs(null);
+    var alive = this.units.filter(function (u) { return u.alive; });
+    if (!alive.length) return;
+    var near = alive[(Math.random() * alive.length) | 0];
+    var xs = [near.x + (Math.random() - 0.5) * 120, 120 + Math.random() * (RZ.WORLD_W - 240)];
+    for (var i = 0; i < xs.length; i++) {
+      this.telegraphs.push({ x: clamp(xs[i], 40, RZ.WORLD_W - 40), r: 62, owner: null, armed: true,
+        strike: 'meteor', power: 95, born: this.t, seed: Math.random() * 6.28 });
+    }
+    this.say('陨石要来了——看警戒线', '#ffd166');
+    RZ.SFX.tick();
+  };
+
   var STRIKES = {
+    meteor: { name: '陨石', look: 'meteor', count: 1, digMul: 1.25, kb: 1.2, shell: { r: 9, color: '#ffd9a0', glow: '#ff5b2a', trail: '#ff7a3d' } },
     mortar: { name: '炮击', look: 'mortar', count: 1, digMul: 1.1, shell: { r: 7, color: '#ffe9b0', glow: '#c9a227', trail: '#e8c060' } },
     bolt:   { name: '落雷', look: 'storm', count: 1, digMul: 1.2, onImpact: 'lightning', shell: { r: 5, color: '#fff7a8', glow: '#ffd21f', trail: '#ffe870' } },
     fire:   { name: '喷火', look: 'napalm', count: 1, digMul: 0.8, shell: { r: 6, color: '#ffe08a', glow: '#ff3b1f', trail: '#ff5b2a' },
@@ -347,7 +375,7 @@
     if (u.stunned > 0) return;
     for (var i = 0; i < this.telegraphs.length; i++) {
       var tg = this.telegraphs[i];
-      if (tg.owner.team !== u.team) tg.armed = true;
+      if (tg.owner && tg.owner.team !== u.team) tg.armed = true;      // 陨石（owner 为 null）按轮落，不走这条
     }
   };
 

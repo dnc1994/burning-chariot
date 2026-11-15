@@ -470,13 +470,71 @@
     return e;
   }
 
+  // ---- 特殊敌人（v1.4）：在普通敌人定义上换一副样子、加一条规矩 ----
+  // art / pal 换画法（render.js 的 ART.turret / ART.bomb），perks 里的 rooted / kamikaze 是 game.js 认的。
+  Run.FOE_KINDS = {
+    turret: { name: '炮台', tag: '固定炮台', note: '不会移动，也不会被击飞。血厚炮重——挖掉它脚下的地。',
+      art: 'turret', pal: ['#8a8f7a', '#4f5546', '#d8361f', '#b89b62'] },
+    swarm: { name: '游骑', tag: '小车', note: '成群出动，每辆都脆，只会打一号武器。' },
+    bomber: { name: '自爆车', tag: '自爆车', note: '不开炮，一路朝你开过来，贴上就炸。打死它会原地殉爆——炸到它的同伙正好。',
+      art: 'bomb', pal: ['#d8361f', '#8f2618', '#f5b921', '#4a3a2c'] }
+  };
+
+  function turretDef(state, step) {
+    var e = enemyDef(state, step, 'fight');
+    e.kind = 'turret'; e.name = '炮台·' + e.name;
+    e.hpMul *= 1.2;                              // 血厚，但炮和别人一样——它已经占了「打不动、掀不走」的便宜
+    e.perks = { rooted: 1, anchor: 1 };
+    return e;
+  }
+  function swarmDef(state, step) {
+    var e = enemyDef(state, step, 'fight');
+    e.kind = 'swarm'; e.name = '游骑·' + e.name;
+    e.hpMul *= 0.26; e.atkMul *= 0.55; e.scale = 0.72;
+    return e;
+  }
+  function bomberDef(state, step) {
+    var e = enemyDef(state, step, 'fight');
+    e.kind = 'bomber'; e.vid = 'liehuo'; e.name = '自爆车';
+    e.hpMul *= 0.34; e.atkMul *= 0.9; e.scale = 0.85;
+    e.perks = { kamikaze: 1 };
+    return e;
+  }
+
+  // 地图词条：哪些图上不该出（本来就低重力的图不再叠低重力，没风的图刮不起大风）
+  function rollMods(mapId, chance) {
+    if (rand() >= chance) return [];
+    var map = RZ.mapById(mapId);
+    var pool = ['night', 'meteor'];
+    if (map.windMax >= 6) pool.push('gale');
+    if (map.gravity >= 0.34) pool.push('lowg');
+    return [pick(pool)];
+  }
+
   function fightNode(state, step, kind) {
-    var act = Run.ACTS[state.act], d = depthOf(state, step);
+    var act = Run.ACTS[state.act], d = depthOf(state, step), i, e;
     var node = { type: kind, mapId: pick(act.maps), enemies: [], gold: kind === 'elite' ? 70 + d * 4 : 32 + d * 3 };
-    if (kind === 'fight' && d >= 2 && rand() < 0.45) {
+    var roll = kind === 'fight' ? rand() : 1;
+    if (d >= 2 && roll < 0.14) {
+      // 一群小车：三辆，最后一个区域四辆
+      for (i = 0; i < (state.act >= 2 ? 4 : 3); i++) node.enemies.push(swarmDef(state, step));
+      node.gold += 12;
+    } else if (d >= 2 && roll < 0.28) {
+      // 炮台 + 一辆护着它的小车
+      node.enemies.push(turretDef(state, step));
+      e = enemyDef(state, step, 'fight'); e.hpMul *= 0.4; e.atkMul *= 0.75;
+      node.enemies.push(e);
+      node.gold += 12;
+    } else if (d >= 3 && roll < 0.42) {
+      // 两辆自爆车 + 一辆正常开炮的
+      e = enemyDef(state, step, 'fight'); e.hpMul *= 0.7; e.atkMul *= 0.9;
+      node.enemies.push(e);
+      node.enemies.push(bomberDef(state, step)); node.enemies.push(bomberDef(state, step));
+      node.gold += 12;
+    } else if (kind === 'fight' && d >= 2 && roll < 0.68) {
       // 两辆小的：每辆更脆，但要挨两份炮
-      for (var i = 0; i < 2; i++) {
-        var e = enemyDef(state, step, 'fight');
+      for (i = 0; i < 2; i++) {
+        e = enemyDef(state, step, 'fight');
         e.hpMul *= 0.6; e.atkMul *= 0.85;
         node.enemies.push(e);
       }
@@ -484,6 +542,24 @@
     } else {
       node.enemies.push(enemyDef(state, step, kind));
     }
+    // 地图词条：开场两层不出，之后普通战斗三成、精英一半。带词条的多给 10 金币
+    if (d >= 1) {
+      node.mods = rollMods(node.mapId, kind === 'elite' ? 0.5 : 0.3);
+      if (node.mods.length) node.gold += 10;
+    }
+    return node;
+  }
+
+  /** 限回合挑战：一辆比平时壮一点的敌人，规定轮数内打掉拿精英级奖励；超时它就跑了，什么都没有 */
+  function trialNode(state, step) {
+    var node = fightNode(state, step, 'elite');
+    node.type = 'trial';
+    node.enemies = [enemyDef(state, step, 'fight')];
+    node.enemies[0].hpMul *= 1.1;
+    node.enemies[0].name = '逃兵·' + node.enemies[0].name;
+    node.mods = [];
+    node.limit = 5;
+    node.gold = 60 + depthOf(state, step) * 4;
     return node;
   }
 
@@ -509,11 +585,13 @@
    * 每层给两三个选项。打得越多拿得越多，也掉得越多血——这就是每一步要权衡的东西。
    */
   Run.genLayers = function (state) {
-    var L = [], other = function () { return { type: pick(['shop', 'rest', 'event', 'event']) }; };
+    var L = [], other = function () { return { type: pick(['shop', 'rest', 'event', 'event', 'chest']) }; };
     L.push([fightNode(state, 0, 'fight'), fightNode(state, 0, 'fight')]);
     L.push([fightNode(state, 1, 'fight'), other(), fightNode(state, 1, 'fight')]);
     L.push([fightNode(state, 2, 'elite'), { type: 'shop' }, { type: 'rest' }]);
-    L.push([fightNode(state, 3, 'fight'), fightNode(state, 3, 'elite'), { type: rand() < 0.5 ? 'rest' : 'shop' }]);
+    // Boss 前一层：普通战斗有四成换成限回合挑战；不想打的那一格偶尔是诅咒祭坛
+    L.push([rand() < 0.4 ? trialNode(state, 3) : fightNode(state, 3, 'fight'), fightNode(state, 3, 'elite'),
+      { type: pick(['rest', 'shop', 'altar']) }]);
     L.push([bossNode(state)]);
     return L;
   };
@@ -531,8 +609,20 @@
     v.w2 = Run.modWeapon(base.w2, e.mods.w2);
     v.ss = Run.modWeapon(base.ss, e.mods.ss);
     if (e.boss) v.regen = base.regen + 3;       // Boss 回油快，必杀放得勤
+    var kind = e.kind && Run.FOE_KINDS[e.kind];
+    if (kind) {
+      v.tag = kind.tag;
+      if (kind.art) { v.art = kind.art; v.pal = kind.pal.slice(); }
+      if (e.kind === 'swarm') { v.w2.fuel = 999; v.ss.fuel = 999; }            // 小车只会打一号武器
+      if (e.kind === 'bomber') { v.name = kind.name; v.moveCost = 0.01; v.w1.fuel = 0; v.climb = Math.max(v.climb, 16); }   // 油不是它的问题
+    }
     return v;
   }
+
+  /** 这个节点是不是要打一场 */
+  Run.isBattle = function (node) {
+    return !!node && (node.type === 'fight' || node.type === 'elite' || node.type === 'boss' || node.type === 'trial');
+  };
 
   /** 选一个节点：战斗类返回 true（界面该去开打了），其余的把 pending 填好 */
   Run.enter = function (state, index) {
@@ -540,12 +630,26 @@
     var node = Run.choices(state)[index];
     if (!node) return false;
     state.node = node;
-    if (node.type === 'fight' || node.type === 'elite' || node.type === 'boss') return true;
+    if (Run.isBattle(node)) return true;
     if (node.type === 'shop') state.pending = { kind: 'shop', stock: Run.genStock(state) };
     else if (node.type === 'rest') state.pending = { kind: 'rest' };
+    else if (node.type === 'chest') {
+      // 宝箱：白拿一笔钱，再从两样东西里挑一样。不用打
+      var g = 30 + Math.round(rand() * 30) + depthOf(state, state.step) * 2;
+      state.gold += g;
+      state.pending = { kind: 'reward', from: 'chest', gold: g, style: 0, choices: rewardChoices(state, 'chest') };
+    }
+    else if (node.type === 'altar') state.pending = { kind: 'event', id: 'altar' };
     else state.pending = { kind: 'event', id: pickEvent(state) };
     return false;
   };
+
+  /** 同名的敌人按出场顺序编号：第一辆不带，后面的 ·2 ·3 …… */
+  function dupSuffix(list, i) {
+    var n = 0;
+    for (var k = 0; k < i; k++) if (list[k].name === list[i].name) n++;
+    return n ? '·' + (n + 1) : '';
+  }
 
   /** 把当前节点变成 Game 的 opts。playerAI 只给无头测试 / 平衡模拟用 */
   Run.battleOpts = function (state, playerAI) {
@@ -559,13 +663,14 @@
     for (i = 0; i < node.enemies.length; i++) {
       var e = node.enemies[i], ev = enemyVehicle(e);
       roster.push({
-        vehicle: ev, team: 1, ai: true, name: e.name + (i && !e.boss && node.enemies[0].name === e.name ? '·2' : ''),
+        vehicle: ev, team: 1, ai: true, name: e.name + dupSuffix(node.enemies, i),
         items: [], perks: e.perks || {}, scale: e.scale || 1, boss: !!e.boss, kit: e.kit || null,
         aiLevel: node.type === 'boss' && !e.boss ? 'normal' : null      // Boss 的护卫打得没那么准，不然三门炮一起点名太狠
       });
     }
     return {
       mapId: node.mapId, roster: roster, arcade: true, hardcore: state.hardcore, guide: true,
+      mods: (node.mods || []).slice(), roundLimit: node.limit || 0,
       difficulty: AI_BY_ACT[Math.min(2, state.act + (state.asc >= 3 ? 1 : 0))],
       humanTeam: playerAI ? null : 0
     };
@@ -606,7 +711,8 @@
       return { type: 'mod', id: pick(p).id };
     };
     if (kind === 'boss') { out.push(relic('boss')); out.push(relic('rare')); out.push(relic('rare')); }
-    else if (kind === 'elite') { out.push(relic('rare')); out.push(relic('rare')); out.push(mod(true)); }
+    else if (kind === 'elite' || kind === 'trial') { out.push(relic('rare')); out.push(relic('rare')); out.push(mod(true)); }
+    else if (kind === 'chest') { out.push(relic(rand() < 0.35 ? 'rare' : 'common')); out.push(mod(rand() < 0.3)); }
     else {
       out.push(mod(rand() < 0.1));
       out.push(relic(rand() < 0.18 ? 'rare' : 'common'));
@@ -632,6 +738,11 @@
     }
     state.hp = me.hp + Run.maxHp(state) * 0.18;        // 战后简单抢修
     clampHp(state);
+    if (game.trialFailed) {                            // 限回合挑战超时：人没事，但什么也没捞着
+      state.battles++;
+      state.pending = { kind: 'note', title: '时间到', text: '规定的轮数里没能全歼，敌人趁乱撤走了。没有奖励，接着赶路。' };
+      return;
+    }
     var gold = Math.round((node.gold + game.style.gold) * (1 + (pk.gold || 0)) * (state.nextGoldMul || 1));
     state.nextGoldMul = 1;                             // 事件「赏金公告」只管一场
     state.gold += gold;
@@ -1025,7 +1136,32 @@
         } }
       ] }
   ];
-  Run.eventById = function (id) { return byId(Run.EVENTS, id); };
+  // 不进随机池的事件：只从专门的节点来
+  Run.SPECIAL_EVENTS = [
+    { id: 'altar', title: '诅咒祭坛', text: '黑铁垒成的祭坛上刻满了弹痕。它什么都肯给——只要你也肯给它点什么。',
+      options: [
+        { label: '献上装甲', desc: '最大耐久永久 -80，获得一件稀有遗物', need: function (s) { return relicPool(s, 'rare').length > 0 && Run.maxHp(s) > 300; },
+          run: function (s) {
+            s.hpBonus -= 80; clampHp(s);
+            var r = randomRelic(s, 'rare');
+            return '祭坛吞掉了一整块装甲板，吐出「' + r.name + '」：' + r.desc;
+          } },
+        { label: '接受诅咒', desc: '获得一件诅咒遗物；一号或二号武器装上一件稀有改造，外加 50 金币', need: function (s) { return relicPool(s, 'curse').length > 0; },
+          run: function (s) {
+            var r = randomRelic(s, 'curse'), slot = pick(['w1', 'w2']), m = pick(modPool(true));
+            s.mods[slot].push(m.id); s.gold += 50;
+            return '你背上了「' + r.name + '」（' + r.desc + '）。作为交换，' + slotName(slot) + '装上了「' + m.name + '」，还有 50 金币。';
+          } },
+        { label: '净化', desc: '拆掉一件诅咒遗物（最新的那件），并恢复 15% 耐久', need: function (s) { return curses(s).length > 0; },
+          run: function (s) {
+            var c = curses(s), r = Run.relicById(c[c.length - 1]);
+            dropRelic(s, r.id); gainMax(s, 0.15);
+            return '「' + r.name + '」在祭坛上化成了灰。';
+          } },
+        { label: '转身离开', desc: '什么都不发生', run: function () { return '你没有回头。'; } }
+      ] }
+  ];
+  Run.eventById = function (id) { return byId(Run.EVENTS, id) || byId(Run.SPECIAL_EVENTS, id); };
 
   /** 抽一个这局还没见过的事件；都见过了就从头再来 */
   function pickEvent(state) {

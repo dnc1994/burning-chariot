@@ -5,7 +5,7 @@
 <iframe id="f" src="../index.html"></iframe>
 <script>
 /* 远征各界面的截图自检，用法同 ui-check.html：
-   ?stage=hub|backup|import|map|boss|reward|shop|rest|event|over|battle|charge|bossfight|field|flow
+   ?stage=hub|backup|import|map|world|boss|reward|shop|rest|event|altar|over|battle|charge|bossfight|field|night|flow
    battle / charge 会真的进一场远征战斗（爽快规则），charge 额外按住空格看弹道预览。 */
 var stage = new URLSearchParams(location.search).get('stage') || 'map';
 document.getElementById('f').onload = function () {
@@ -42,9 +42,27 @@ document.getElementById('f').onload = function () {
   if (stage === 'event') { s.gold = 20; s.pending = { kind: 'event', id: 'convoy' }; }   // 钱不够，第一个选项灰掉
   if (stage === 'over') { s.battles = 7; s.bosses = 1; s.act = 1; s.step = 3; Run.finish(s, false); }
   if (stage === 'boss' || stage === 'bossfight') { s.step = 4; }
+  if (stage === 'altar') { s.pending = { kind: 'event', id: 'altar' }; }
+  var foe = function (o) { var e = { vid: 'honglong', name: '红龙', hpMul: 0.7, atkMul: 0.7, mods: { w1: [], w2: [], ss: [] }, perks: {} }; for (var k in o) e[k] = o[k]; return e; };
+  if (stage === 'world') {                        // v1.4 的新东西摆满一层：特殊敌人 + 词条、限时挑战、祭坛
+    s.act = 1; s.step = 3;
+    s.layers[3] = [
+      { type: 'fight', mapId: 'sea', gold: 66, mods: ['night'], enemies: [
+        foe({ kind: 'turret', vid: 'tuoer', name: '炮台·托尔', perks: { rooted: 1, anchor: 1 }, hpMul: 0.9 }),
+        foe({ kind: 'bomber', vid: 'liehuo', name: '自爆车', perks: { kamikaze: 1 }, hpMul: 0.25 }),
+        foe({ kind: 'bomber', vid: 'liehuo', name: '自爆车', perks: { kamikaze: 1 }, hpMul: 0.25 })] },
+      { type: 'trial', mapId: 'sky', gold: 88, limit: 5, mods: [], enemies: [foe({ name: '逃兵·红龙' })] },
+      { type: 'altar' }];
+  }
+  if (stage === 'night') {                        // 夜战 + 陨石雨：炮台、自爆车、小车各一
+    s.layers[0] = [{ type: 'fight', mapId: 'dry', gold: 40, mods: ['night', 'meteor'], enemies: [
+      foe({ kind: 'turret', vid: 'tuoer', name: '炮台·托尔', perks: { rooted: 1, anchor: 1 } }),
+      foe({ kind: 'bomber', vid: 'liehuo', name: '自爆车', perks: { kamikaze: 1 }, scale: 0.85 }),
+      foe({ kind: 'swarm', vid: 'xuanfeng', name: '游骑·旋风', scale: 0.72 })] }];
+  }
   RZ.RunUI._set(s);
   if (stage === 'reward') d.querySelector('.offer.mod [data-act="take"]').click();   // 展开「装到哪把武器」
-  if (['battle', 'charge', 'flow', 'bossfight', 'field'].indexOf(stage) < 0) return;
+  if (['battle', 'charge', 'flow', 'bossfight', 'field', 'night'].indexOf(stage) < 0) return;
 
   d.querySelector('[data-act="enter"]').click();
   setTimeout(function () {
@@ -67,6 +85,15 @@ document.getElementById('f').onload = function () {
       g.telegraphs.push({ x: me.x - 10, r: 62, owner: g.units[1], strike: 'mortar', power: 150, born: 0, seed: 1 });
       g.cam.x = g.cam.tx = Math.max(0, me.x - 220);
       g.cam.y = g.cam.ty = Math.max(0, me.y - g.viewH * 0.55);
+      g.updateCamera = function () {};
+    }
+    if (stage === 'night') {                      // 三个敌人摆到玩家右边：一个在 420px 内（看得见），两个在暗处
+      var p0 = g.units[0], yy = function (x) { return g.terrain.groundBelow(x, 0); };
+      [[1, 520], [2, 250], [3, 640]].forEach(function (a) { var u = g.units[a[0]]; u.x = p0.x + a[1]; u.y = yy(u.x); u.airborne = false; u.face = -1; });
+      g.units[1].lastSeenX = p0.x + 520; g.units[1].lastSeenY = yy(p0.x + 520);
+      g.units[3].lastSeenX = p0.x + 700; g.units[3].lastSeenY = yy(p0.x + 700);
+      g.cam.x = g.cam.tx = Math.max(0, p0.x - 200);
+      g.cam.y = g.cam.ty = Math.max(0, p0.y - g.viewH * 0.55);
       g.updateCamera = function () {};
     }
     if (stage === 'bossfight') {                  // 镜头拉到 Boss 身上，看体型和油桶

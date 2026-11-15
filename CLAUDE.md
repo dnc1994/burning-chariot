@@ -106,6 +106,27 @@
 - v1.3 往 state 里加的字段（`seenEvents` `atkBonus` `fuelBonus` `luck` `nextGoldMul`）都是可缺省的，
   老存档没有它们照样能读——以后加字段也照这个办，别在 `newRun` 里加了就当一定存在。
 
+### 词条、特殊敌人、新节点（v1.4）
+
+- **地图词条** `RZ.MAP_MODS`（`field.js`）：节点上是 `node.mods = ['night']`，经 `battleOpts` 变成 `opts.mods`。
+  `Game` 只在爽快规则下认它；大风 / 低重力改的是 `Object.create(map)` 出来的副本，**`RZ.MAPS` 原件不许动**。
+  `rollMods()` 负责「这张图上不该出哪条」（本来就低重力的不叠低重力）。每个区域第一层和 Boss 战不带词条。
+- **夜战**是把隐身那套推广了：`hiddenFrom(team, u)` = 隐身，或者 `game.dark && !litFor(team, u)`。
+  `litFor` 只认三样——这一回合被炸到 / 被火光照到（`u.litTurn === turnNo`）、离对方某辆车 420px 内、站在地火旁。
+  **开炮不暴露**。`lastSeenX/Y` 只在「对面看得见它」时更新，画面上在那儿画一个问号（`RZ.drawGhost`）。
+  电脑照旧只走 `knownPos()`，所以它跟玩家一样瞎——新写的 AI 逻辑别读 `u.x`。
+- **陨石雨** `meteorRound()`：在 `startRound()` 里先落上一轮圈的、再圈两块新的。用的是 Boss 的警戒线，`owner: null`、
+  一出生就 `armed`（一轮里人人都轮到过，不需要 `armTelegraphs` 那套）。`resolveTelegraphs(null)` 只落它们。
+- **限回合** `opts.roundLimit`：`beginTurn` 里发现轮数超了就 `trialFailed = true; result = 0`——不算输。
+  `Run.afterBattle` 见到 `trialFailed` 只给一条提示，没有奖励。
+- **特殊敌人** `Run.FOE_KINDS`：敌人定义上多一个 `kind`，`enemyVehicle()` 据此换 `art` / `pal` / `tag`；规矩靠 perks：
+  `rooted`（`moveActive` 里只转身）、`kamikaze`（`updateAI` 开头转去 `kamikazeStep`，贴上就 `explode(BOMB)`；
+  被打死在 `kill()` 里排一个 `BOMB_DEATH`，算在击杀者头上）。小车群只是把二号武器和必杀的耗油设成 999。
+  新画法在 `render.js` 的 `ART.turret` / `ART.bomb`；远征界面的立绘靠 `data-kind` 换画法。
+- **新节点**：`trial` 是战斗（`Run.isBattle()` 统一判断，别再手写 `type === 'fight' || …`）；
+  `chest` 直接给一个 `from: 'chest'` 的 reward；`altar` 是 `Run.SPECIAL_EVENTS` 里的事件，不进随机池。
+- 老存档的节点没有 `mods` / `limit` / `kind`，`battleOpts` 都按缺省处理（有测试）。
+
 ### 存档与进度码（`js/run.js`）
 
 - 局外存档 `rz-meta` 每次写入前把上一份挪到 `rz-meta-bak`；主档读不出来就退回备份。
@@ -164,7 +185,7 @@ node test/balance-sim.js   # 远征平衡模拟：电脑代打 N 局，看能走
 | 轮次 | 每轮每人恰好一次、最多连着两手、阵亡后照常轮转 |
 | 界面 | 不泄露出手顺序与对手读数、HUD 每帧 DOM 写入量、道具点两下才用掉 |
 | 收尾 | 暂停打断蓄力后电脑要能接着打、分出胜负后对局必须停止 |
-| 爽快规则与远征 | `test/run-mode.js`：没漏进经典规则、击飞、油桶连锁、预览、遗物、改造、场地区域、Boss 招式、进度码、远征状态机、战车被动、联动、诅咒、稀有改造、商店刷新、事件、电脑代打跑完整局 |
+| 爽快规则与远征 | `test/run-mode.js`：没漏进经典规则、击飞、油桶连锁、预览、遗物、改造、场地区域、Boss 招式、进度码、远征状态机、战车被动、联动、诅咒、稀有改造、商店刷新、事件、地图词条、夜战、陨石雨、新敌人、新节点、电脑代打跑完整局 |
 
 浏览器侧自检页（配合 headless Chrome 截图，见第 6 节）：
 
@@ -172,7 +193,7 @@ node test/balance-sim.js   # 远征平衡模拟：电脑代打 N 局，看能走
 test/render-check.html?map=sky&n=4&frames=900
 test/ui-check.html?stage=title|setup|codex|battle|fire|aimline|pause|enemy|items|itemarmed|ultimate|result
 test/perf-check.html?n=200
-test/run-check.html?stage=hub|backup|import|map|boss|reward|shop|rest|event|over|battle|charge|bossfight|field|flow
+test/run-check.html?stage=hub|backup|import|map|world|boss|reward|shop|rest|event|altar|over|battle|charge|bossfight|field|night|flow
 test/sfx-check.html        # 音效试听 + 离线量峰值；headless 下 --dump-dom 看 #report
 test/weapon-check.html?f=6 # 所有武器的弹体与落地效果总览
 ```
