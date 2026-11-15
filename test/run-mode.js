@@ -26,6 +26,14 @@ module.exports = function runModeTests(RZ, check, head) {
   };
   const settle = (g, n) => { for (let i = 0; i < (n || 400); i++) g.update(16); };
 
+  // ---------- 版本号 ----------
+  head('版本号');
+  {
+    const log = require('fs').readFileSync(require('path').join(__dirname, '..', 'CHANGELOG.md'), 'utf8');
+    check(/^\d+\.\d+\.\d+$/.test(RZ.VERSION), 'RZ.VERSION 是 x.y.z 的形式', RZ.VERSION);
+    check(log.indexOf('## v' + RZ.VERSION) >= 0, 'CHANGELOG.md 里有当前版本的小节');
+  }
+
   // ---------- 经典规则没被污染 ----------
   head('爽快规则没有漏进经典规则');
   {

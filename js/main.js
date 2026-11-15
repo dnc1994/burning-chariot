@@ -721,6 +721,7 @@
   window.addEventListener('DOMContentLoaded', function () {
     canvas = $('stage');
     ctx = canvas.getContext('2d');
+    $('ver').textContent = 'v' + RZ.VERSION;
     buildMaps();
     buildVehicles();
     buildShop();

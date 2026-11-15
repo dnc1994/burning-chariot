@@ -7,4 +7,5 @@ node_modules
 wrangler.jsonc
 CLAUDE.md
 README.md
+CHANGELOG.md
 test

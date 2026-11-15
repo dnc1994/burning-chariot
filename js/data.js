@@ -13,6 +13,9 @@
 (function (RZ) {
   'use strict';
 
+  // 版本号：每次大更新都要改这里，并在 CHANGELOG.md 里记一条、打一个同名 git tag
+  RZ.VERSION = '1.0.0';
+
   RZ.MAX_FUEL = 200;          // 燃料上限，全场统一
   RZ.START_FUEL = 22;         // 开局油量：勉强够打一发一号或二号武器 + 挪两步
                               // （奥丁这种二号武器耗油 20 的，一发就见底）
