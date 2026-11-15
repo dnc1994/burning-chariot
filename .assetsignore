@@ -1,0 +1,10 @@
+# 不需要发到线上的东西：仓库元数据、文档、测试、部署配置本身
+.git
+.gitignore
+.assetsignore
+.wrangler
+node_modules
+wrangler.jsonc
+CLAUDE.md
+README.md
+test
