@@ -15,7 +15,9 @@
   var ARCADE = {
     startFuel: 60,             // 开局就摸得到二号武器，三四回合一发必杀
     regenMul: 1.6,
-    charge: 1.3,               // 蓄力更快，满条约 1.3 秒
+    charge: 1.0,               // 满条约 1.7 秒。1.3 太快：一帧就是 1.3 点力度，落点差出几十像素
+    markHold: 20,              // 蓄到标记处停顿的帧数（约 1/3 秒）：这时松手就是标记的力度，分毫不差
+    markDefault: 55,           // 还没打过、也没标过时，预览线按这个力度画
     aiWait: 12,
     settle: 20,
     overheatRound: 9           // 第几轮开始「战场过热」，逼着双方分出胜负
@@ -74,6 +76,8 @@
     this.face = 1; this.aim = 45; this.power = 0;
     this.lastSeenX = 0; this.lastSeenY = 0;   // 隐身前最后被看到的位置
     this.lastPower = 0;          // 上一发用的力度，作为蓄力条上的参考刻度
+    this.markPower = 0;          // 玩家在蓄力条上标的力度（爽快规则）；0 = 没标，跟着上一发走
+    this.markHold = 0;           // 蓄力蓄到标记处时的停顿，还剩几帧
     this.weaponIdx = 0;
     this.delay = 0;              // 上一次出手的延迟值，只用来排下一轮的先后
     // 位次用负的 index 起头：开局第一轮仍按出场顺序，之后才轮到「上轮靠后者先动」
@@ -239,6 +243,9 @@
       aim: Math.round(view.aim),
       power: live ? Math.round(view.power) : 0,     // 别人的蓄力不给看
       lastPower: view.lastPower,
+      // 预览线是按哪个力度画的。经典 / 硬核没有预览，也就没有标记（null）
+      mark: this.markOf(view),
+      markSet: view.markPower > 0,
       weaponIdx: view.weaponIdx,
       weaponFuel: view.weapon().fuel,
       canSS: view.canAfford(view.vehicle.ss),
@@ -769,7 +776,9 @@
     var u = this.active;
     if (!this.arc || this.hardcore || !this.guide) return null;
     if (!u || u.ai || this.phase !== 'aim' || u.noFire) return null;
-    var power = this.charging ? Math.max(4, u.power) : (u.lastPower || 55);
+    // 始终按标记的力度画，蓄力时也不跟着条走：线是「目标」，条是「现在」，
+    // 蓄到标记处松手，打出去的就是这条线（见 update 里的 markHold）。
+    var power = this.markOf(u);
     var mode = u.shotMode;
     var w = mode === 'fly' ? RZ.LOCATOR : mode === 'stun' ? RZ.STUN_SHELL : u.weapon();
     var shots = RZ.launch(u, w, u.aim, power, this.map.gravity);
@@ -789,6 +798,28 @@
     var keep = u.perks.scope ? 1 : 0.45;
     pts.length = Math.max(2, ((pts.length / 2 * keep) | 0) * 2);
     return pts;
+  };
+
+  /**
+   * 这辆车的预览线 / 蓄力停顿用的力度：自己标的 > 上一发 > 默认值。
+   * 经典规则和硬核下没有这回事，返回 null——蓄力条上那条线仍然只是「上一发」。
+   */
+  Game.prototype.markOf = function (u) {
+    if (!this.arc || this.hardcore || !u) return null;
+    return u.markPower || u.lastPower || this.arc.markDefault;
+  };
+
+  /** 在蓄力条上标力度。只在自己的瞄准阶段、还没开始蓄力时能改 */
+  Game.prototype.setMark = function (p) {
+    var u = this.active;
+    if (this.markOf(u) === null || u.ai || this.phase !== 'aim' || this.charging) return false;
+    u.markPower = clamp(Math.round(p), 4, 100);
+    return true;
+  };
+
+  Game.prototype.nudgeMark = function (d) {
+    var m = this.markOf(this.active);
+    return m === null ? false : this.setMark(m + d);
   };
 
   Game.prototype.strikeLightning = function (x, y, w, attacker, damage) {
@@ -983,6 +1014,7 @@
     if (!this.active || this.phase !== 'aim' || this.charging) return;
     this.charging = true;
     this.active.power = 0;
+    this.active.markHold = 0;
     RZ.SFX.startCharge();
   };
 
@@ -1025,8 +1057,19 @@
 
     // 蓄力
     if (this.charging && this.active) {
-      this.active.power = Math.min(100, this.active.power + (this.arc ? this.arc.charge : CHARGE_RATE));
-      RZ.SFX.updateCharge(this.active.power);
+      var cu = this.active;
+      var rate = this.arc ? this.arc.charge : CHARGE_RATE;
+      var mk = cu.ai ? null : this.markOf(cu);
+      if (cu.markHold > 0) {
+        cu.markHold--;                       // 停在标记上：这几帧里松手，力度就是标记值
+      } else if (mk !== null && cu.power < mk && cu.power + rate >= mk) {
+        cu.power = mk;
+        cu.markHold = this.arc.markHold;
+        RZ.SFX.tick();                       // 「到了」——不盯着条也听得出来
+      } else {
+        cu.power = Math.min(100, cu.power + rate);
+      }
+      RZ.SFX.updateCharge(cu.power);
     }
 
     // 回合倒计时

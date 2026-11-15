@@ -199,6 +199,11 @@ test/hud-writes.js 计数版 DOM 桩件 + 接管 rAF，测 HUD 每帧写了多�
 「perks 里某个值非零」后面。经典模式的 Unit 的 `perks` 是 `{}`，读出来全是 `undefined`。
 加新机制时照这个办法做，别去改经典路径上的数值。
 
+**力度标记（爽快规则）**：`game.markOf(u)` = 玩家标的 `markPower` > 上一发 `lastPower` > 默认 55；
+经典 / 硬核下恒为 `null`。`previewPath()` 永远按它画（蓄力时也不跟着蓄力条走），蓄力蓄到它会停
+`ARCADE.markHold` 帧——所以「在停顿里松手」打出的弹道和预览线逐点重合（有测试守着）。
+预览和实弹必须一直是同一个 `RZ.launch` + `RZ.step`，别给预览单写一套近似。电脑不吃停顿。
+
 **远征不改 Game**：`run.js` 只负责造 `Game` 的 `opts`（`Run.battleOpts`）和读回结果
 （`Run.afterBattle`）。玩家的车和敌人都是**克隆出来的 vehicle 对象**（改过的 hp / atk / 武器），
 所以 `game.js`、`ai.js` 里到处写的 `u.vehicle.w1` 不用动，电脑搜弹道时也自然算上了改造。

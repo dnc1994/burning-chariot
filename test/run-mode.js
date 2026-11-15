@@ -43,6 +43,12 @@ module.exports = function runModeTests(RZ, check, head) {
     check(g.props.length === 0, '经典规则没有油桶');
     check(g.previewPath() === null, '经典规则没有弹道预览');
     check(g.hudState().queue === null, '经典规则不给出手队列');
+    {
+      // 经典的蓄力手感不变：满条约 2 秒，途中不在任何地方停顿
+      const c = mk(); c.units[0].lastPower = 40; c.startCharge();
+      for (let i = 0; i < 60; i++) c.update(16);
+      check(Math.abs(c.units[0].power - 48) < 0.01, '经典蓄力速度不变、经过上一发的刻度也不停', `60 帧 → ${c.units[0].power.toFixed(1)}`);
+    }
     const x0 = g.units[1].x;
     flatten(g); g.units[1].y = 600;
     g.explode(g.units[1].x - 20, 590, V('liehuo').w1, g.units[0], null, 1);
@@ -168,6 +174,65 @@ module.exports = function runModeTests(RZ, check, head) {
     check(g.previewPath() === null, '按 G 可以关掉');
     g.guide = true; g.hardcore = true;
     check(g.previewPath() === null, '硬核开关关掉预览');
+  }
+
+  // ---------- 力度标记 ----------
+  head('爽快规则：力度标记');
+  {
+    const g = arena();
+    const u = g.units[0];
+    u.aim = 50; u.perks = { scope: 1 };
+    check(g.hudState().mark === 55, '没打过也没标过时，预览按默认力度画，并且界面上写明', `${g.hudState().mark}`);
+    check(g.setMark(62.4) && u.markPower === 62 && g.hudState().mark === 62, '点蓄力条标出力度');
+    g.nudgeMark(1); g.nudgeMark(1); g.nudgeMark(-1);
+    check(u.markPower === 63, 'Q / E 一次挪 1 点', `${u.markPower}`);
+    g.setMark(62);
+    const line = g.previewPath();
+    u.markPower = 80;
+    const far = g.previewPath();
+    check(far[far.length - 2] - line[line.length - 2] > 100, '标记不同，预览线跟着变');
+    u.markPower = 62;
+
+    // 蓄力：到标记处停一下，停顿期间松手就是标记值
+    g.startCharge();
+    let n = 0, held = 0;
+    while (u.power < 62 && n++ < 200) g.update(16);
+    for (let i = 0; i < 10; i++) { g.update(16); if (u.power === 62) held++; }
+    check(u.power === 62 && held === 10, '蓄到标记处会停住', `${n} 帧到位，之后 10 帧力度 ${u.power}`);
+    const during = g.previewPath();
+    check(during.length === line.length && during[during.length - 2] === line[line.length - 2], '蓄力过程中预览线不动');
+    g.releaseCharge();
+    const shot = g.projectiles[0];
+    check(u.lastPower === 62, '停顿时松手，打出去的正是标记的力度', `${u.lastPower}`);
+    // 预览跑的是同一套物理：实际弹道逐点重合
+    let worst = 0;
+    const env = { terrain: g.terrain, gravity: g.map.gravity, wind: g.wind, recordTrail: false, spawn: [], units: g.units };
+    for (let i = 0; i < line.length / 2; i++) {
+      const ev = RZ.step(shot, env);
+      worst = Math.max(worst, Math.abs(shot.x - line[i * 2]) + Math.abs(shot.y - line[i * 2 + 1]));
+      if (ev && ev.type !== 'bounce') break;
+    }
+    check(worst < 0.001, '实际弹道和预览线完全重合', `最大偏差 ${worst.toFixed(4)}px`);
+  }
+  {
+    // 不在标记上松手照样能打；越过标记继续涨
+    const g = arena();
+    const u = g.units[0];
+    g.setMark(30);
+    g.startCharge();
+    for (let i = 0; i < 80; i++) g.update(16);
+    check(u.power > 50, '停顿过后继续往上蓄', `${u.power}`);
+    g.cancelCharge();
+    check(u.markPower === 30, '标记留着，下一发还在');
+    g.startCharge();
+    check(g.setMark(70) === false, '蓄力中不能改标记');
+    g.cancelCharge();
+    g.hardcore = true;
+    check(g.hudState().mark === null && g.setMark(40) === false, '硬核下没有标记');
+  }
+  {
+    const g = mk();
+    check(g.hudState().mark === null && g.setMark(40) === false && g.units[0].markPower === 0, '经典规则没有力度标记');
   }
 
   // ---------- 遗物 ----------

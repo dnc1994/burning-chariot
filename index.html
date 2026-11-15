@@ -110,6 +110,8 @@
           <li><b>← →</b><span>移动战车（消耗燃料）</span></li>
           <li><b>↑ ↓</b><span>调整炮口角度</span></li>
           <li><b>空格</b><span>按住蓄力，松开发射；蓄力条上的竖线是你上一发用的力度</span></li>
+          <li><b>点蓄力条</b><span>（远征 / 爽快规则）标出想要的力度，预览线就按它画；<b>Q / E</b> 或滚轮微调 1 点。
+            蓄到标记处会停一下，这时松手就是标记的力度</span></li>
           <li><b>1 / 2 / 3</b><span>切换一号武器、二号武器、必杀</span></li>
           <li><b>Enter</b><span>跳过本回合（油不够时用来攒燃料）</span></li>
           <li><b>G</b><span>开关炮口指示线（经典只显示角度；爽快规则下是弹道预览）</span></li>
@@ -129,7 +131,8 @@
             所有战车每回合掉血。</li>
           <li><b>击飞与油桶</b>：爆炸会把战车横向掀出去，悬崖和浮岛边上能直接打出界；
             场上的油桶一点就炸，还会连锁。</li>
-          <li><b>弹道预览</b>：默认画出这一发的前半段轨迹（按 G 开关），落点仍要自己估；
+          <li><b>弹道预览</b>：按「当前角度 + 蓄力条上标记的力度 + 风」画出这一发的前半段轨迹（按 G 开关），
+            照着标记松手，炮弹走的就是这条线；后半段和落点仍要自己估。
             上方还会显示出手顺序。出发前打开「硬核」就把这些都关掉。</li>
           <li><b>留在场上的东西</b>：有些武器落地后会留下一块区域，头顶写着名字和还剩几轮。
             <b>地火</b>（赤焰、红龙和烈火的必杀）和<b>毒池</b>（毒蜘蛛）会伤到回合开始时站在里面的战车——
@@ -205,9 +208,10 @@
       <div class="hud-bottom-center" id="panel-action">
         <div class="weapons" id="weapons"></div>
         <div class="power-wrap">
-          <div class="power-bar">
+          <div class="power-bar" id="power-bar">
             <div id="power-fill"></div>
             <div class="power-ticks"></div>
+            <div id="power-last" class="power-last" hidden></div>
             <div id="power-mark" class="power-mark" hidden></div>
           </div>
           <div class="aim-read">角度 <b id="aim-val">45</b>° · 力度 <b id="pow-val">0</b><span id="pow-last"></span></div>

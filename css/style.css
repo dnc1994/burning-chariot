@@ -331,16 +331,22 @@ h1, h2, h3, h4 { font-family: var(--display); font-weight: 400; }
   position: absolute; inset: 0;
   background: repeating-linear-gradient(90deg, transparent 0 31.4px, var(--ink) 31.4px 33.4px);
 }
-/* 上一发用过的力度：微调时对着这条线找感觉 */
-.power-mark {
-  position: absolute; top: -7px; bottom: -7px; width: 4px;
-  background: var(--ink);
-  transform: translateX(-2px); pointer-events: none;
+/* 爽快规则下蓄力条可以点：点哪标哪 */
+.power-bar.markable { pointer-events: auto; cursor: pointer; touch-action: none; }
+.power-bar.markable::before { content: ""; position: absolute; inset: -12px -6px; }   /* 把可点的范围放大一圈 */
+/* 标记到位、正停在上面：外面套一圈纸色框、标记变红（硬切，不做过渡） */
+.power-bar.onmark { outline: 4px solid var(--paper); }
+.power-bar.onmark .power-mark { background: var(--red); }
+/* 上一发实际打出去的力度（和标记不一样时才显示）：一根细墨线 */
+.power-last {
+  position: absolute; top: -4px; bottom: -4px; width: 2px;
+  background: var(--ink); transform: translateX(-1px); pointer-events: none;
 }
-.power-mark::after {
-  content: ""; position: absolute; left: -5px; top: -7px;
-  border-left: 7px solid transparent; border-right: 7px solid transparent;
-  border-top: 9px solid var(--ink);
+/* 标记的力度（经典规则下是上一发用过的力度）：预览线就是按它画的 */
+.power-mark {
+  position: absolute; top: -8px; bottom: -8px; width: 8px;
+  background: var(--paper); border: 2px solid var(--ink);
+  transform: translateX(-4px); pointer-events: none;
 }
 #pow-last { color: var(--paper-2); margin-left: 8px; font-size: 14px; }
 

@@ -336,6 +336,8 @@
     if (k === '2') game.setWeapon(1);
     if (k === '3') game.setWeapon(2);
     if (k === 'Enter') { game.passTurn(); RZ.SFX.click(); }
+    if (k === 'q' || k === 'Q') { if (game.nudgeMark(-1)) RZ.SFX.click(); }
+    if (k === 'e' || k === 'E') { if (game.nudgeMark(1)) RZ.SFX.click(); }
     if (k === 'g' || k === 'G') toggleGuide();
     if (k === 'f' || k === 'F') toggleFast();
     if (k === 'm' || k === 'M') toggleMute();
@@ -349,6 +351,31 @@
   function canControl() {
     return game && game.active && !game.active.ai && game.phase === 'aim';
   }
+
+  // 蓄力条：点 / 拖动标力度，滚轮微调。规则判断全在 game.setMark() 里（经典规则下它什么都不做）
+  (function bindPowerBar() {
+    var bar = $('power-bar'), dragging = false;
+    function at(e) {
+      var r = bar.getBoundingClientRect();
+      if (!game || paused || !r.width) return;
+      game.setMark((e.clientX - r.left) / r.width * 100);
+    }
+    bar.addEventListener('pointerdown', function (e) {
+      if (e.button) return;                       // 只认左键 / 触摸
+      e.preventDefault();
+      dragging = true;
+      if (bar.setPointerCapture) bar.setPointerCapture(e.pointerId);
+      at(e); RZ.SFX.click();
+    });
+    bar.addEventListener('pointermove', function (e) { if (dragging) at(e); });
+    var end = function () { dragging = false; };
+    bar.addEventListener('pointerup', end);
+    bar.addEventListener('pointercancel', end);
+    $('screen-game').addEventListener('wheel', function (e) {
+      if (!game || paused) return;
+      if (game.nudgeMark(e.deltaY < 0 ? 1 : -1)) e.preventDefault();
+    }, { passive: false });
+  })();
 
   // 触屏按钮映射到同一套虚拟按键
   (function bindTouch() {
@@ -489,14 +516,20 @@
       }
       if (!canUse && armedItem >= 0) { armedItem = -1; $('item-tip').innerHTML = ''; }
 
-      // 上一发的力度：微调时对着这条刻度找感觉
-      setHidden('power-mark', !(h.lastPower > 0));
-      if (h.lastPower > 0) {
-        setStyle('power-mark', 'left', h.lastPower + '%');
-        setText('pow-last', '（上次 ' + h.lastPower + '）');
-      } else {
-        setText('pow-last', '');
-      }
+      // 蓄力条上的刻度。爽快规则：粗线是标记（预览线就按它画），细线是上一发实际的力度；
+      // 经典 / 硬核没有预览（h.mark 为 null），粗线仍然只是「上一发」。
+      var marked = h.mark !== null && h.mark !== undefined;
+      var at = marked ? h.mark : h.lastPower;
+      setClass('power-bar', 'markable', marked && h.live);
+      setClass('power-bar', 'onmark', marked && h.live && game.charging && h.unit.markHold > 0);
+      setHidden('power-mark', !(at > 0));
+      if (at > 0) setStyle('power-mark', 'left', at + '%');
+      var showLast = marked && h.lastPower > 0 && h.lastPower !== h.mark;
+      setHidden('power-last', !showLast);
+      if (showLast) setStyle('power-last', 'left', h.lastPower + '%');
+      setText('pow-last', marked
+        ? '　预览按 ' + h.mark + (showLast ? '　上次 ' + h.lastPower : '')
+        : (h.lastPower > 0 ? '（上次 ' + h.lastPower + '）' : ''));
     }
 
     // 播报
