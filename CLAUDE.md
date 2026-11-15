@@ -297,6 +297,9 @@ CH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 ## 7. TODO / 已知缺口
 
+> 接下来做什么、按什么顺序做，看 [`ROADMAP.md`](ROADMAP.md)（项目主人确认过的版本计划）。
+> 做完一项就把它从路线图里划掉或挪进 `CHANGELOG.md`；这一节只记零散的缺口。
+
 - **电脑不会用「飞行」道具**：挑一个好的传送落点是另一套搜索问题，没做。
   其余八种道具 AI 都会用（`aiUseSupportItems` / `aiUseOffenseItems`）。
 - **经典模式没有金币经济**：赛前道具不限量。（远征有自己的金币和商店，见 `run.js`。）
