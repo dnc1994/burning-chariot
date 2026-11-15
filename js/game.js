@@ -111,6 +111,7 @@
     this.telegraphs = [];                // Boss 圈出来、下回合才落地的打击（field.js）
     this.pendingBlasts = [];             // 延迟引爆：油桶连锁、余震
     this.hitstop = 0;                    // 顿帧
+    this.preShow = 0;                    // 电脑回合里玩家动了角度 / 标记 / 武器：预览线再亮多少帧
     this.slowmo = 0;                     // 击破时的慢动作
     this.banner = null;                  // 画面中央的喝彩字
     this.style = { gold: 0, tags: {} };  // 花式命中攒下的赏金，远征结算时用
@@ -242,6 +243,7 @@
       lastPower: view.lastPower,
       // 预览线是按哪个力度画的。经典 / 硬核没有预览，也就没有标记（null）
       mark: this.markOf(view),
+      pre: !live && view === this.preUnit(),            // 电脑的回合，但角度 / 标记 / 武器可以先摆好
       markSet: view.markPower > 0,
       weaponIdx: view.weaponIdx,
       weaponFuel: view.weapon().fuel,
@@ -779,7 +781,11 @@
   Game.prototype.previewPath = function () {
     var u = this.active;
     if (!this.arc || this.hardcore || !this.guide) return null;
-    if (!u || u.ai || this.phase !== 'aim' || u.noFire) return null;
+    // 电脑的回合里玩家刚动过角度 / 标记 / 武器：按现在的风把他那条线亮一会儿
+    // （到他出手时风还会再变一步，所以只是参考）
+    if (u && u.ai && this.preShow > 0) u = this.preUnit();
+    else if (!u || u.ai || this.phase !== 'aim' || u.noFire) return null;
+    if (!u) return null;
     // 始终按标记的力度画，蓄力时也不跟着条走：线是「目标」，条是「现在」，
     // 蓄到标记处松手，打出去的就是这条线。
     var power = this.markOf(u);
@@ -813,16 +819,21 @@
     return u.markPower || u.lastPower || this.arc.markDefault;
   };
 
-  /** 在蓄力条上标力度。只在自己的瞄准阶段、还没开始蓄力时能改 */
+  /** 在蓄力条上标力度。自己的瞄准阶段（还没开始蓄力）能改；电脑的回合里也能先标好 */
   Game.prototype.setMark = function (p) {
-    var u = this.active;
-    if (this.markOf(u) === null || u.ai || this.phase !== 'aim' || this.charging) return false;
+    var u = this.preUnit();
+    if (u) this.preShow = 150;
+    else {
+      u = this.active;
+      if (!u || u.ai || this.phase !== 'aim' || this.charging) return false;
+    }
+    if (this.markOf(u) === null) return false;
     u.markPower = clamp(Math.round(p), 4, 100);
     return true;
   };
 
   Game.prototype.nudgeMark = function (d) {
-    var m = this.markOf(this.active);
+    var m = this.markOf(this.preUnit() || this.active);
     return m === null ? false : this.setMark(m + d);
   };
 
@@ -992,6 +1003,11 @@
   /** 每帧处理「按住不放」的按键；keys 是 {按键名: 布尔} */
   Game.prototype.applyHeld = function (keys) {
     var u = this.active;
+    if (u && u.ai && this.preUnit()) {                 // 电脑的回合：只许预先调角度
+      if (keys.ArrowUp) this.adjustAim(1);
+      if (keys.ArrowDown) this.adjustAim(-1);
+      return;
+    }
     if (!u || u.ai || this.phase !== 'aim' || this.result !== null) return;
     if (keys.ArrowLeft) this.moveActive(-1);
     if (keys.ArrowRight) this.moveActive(1);
@@ -999,15 +1015,38 @@
     if (keys.ArrowDown) this.adjustAim(-1);
   };
 
+  /**
+   * 爽快规则：轮到电脑时，玩家可以先把自己那辆车的角度、力度标记、武器摆好，不用干等。
+   * 返回这时候归玩家摆弄的那辆车；经典规则、或者本来就轮到玩家时返回 null。
+   * 只许动这三样——移动、道具、开火都得等到自己的回合。
+   */
+  Game.prototype.preUnit = function () {
+    var a = this.active;
+    if (!this.arc || !a || !a.ai || this.result !== null) return null;
+    var v = this.viewUnit();
+    return v && v.alive && !v.ai ? v : null;
+  };
+
   Game.prototype.adjustAim = function (d) {
     var u = this.active;
+    if (!u || this.phase !== 'aim' || u.ai) {
+      var pre = this.preUnit();
+      if (pre) { pre.aim = clamp(pre.aim + d, -25, 90); this.preShow = 150; return; }
+    }
     if (!u || this.phase !== 'aim') return;
     u.aim = clamp(u.aim + d, -25, 90);
   };
 
   Game.prototype.setWeapon = function (idx) {
     var u = this.active;
-    if (!u || this.phase !== 'aim') return;
+    var pre = this.preUnit();
+    if (pre) {
+      // 这时候不看油够不够：回合开始还会回油；到时真不够，beginTurn 会退回一号武器
+      pre.weaponIdx = idx; this.preShow = 150;
+      RZ.SFX.click();
+      return;
+    }
+    if (!u || u.ai || this.phase !== 'aim') return;      // 电脑的武器不归键盘管（它自己直接写 weaponIdx）
     var w = idx === 0 ? u.vehicle.w1 : idx === 1 ? u.vehicle.w2 : u.vehicle.ss;
     if (!u.canAfford(w)) { this.say('燃料不足：' + w.name + ' 需要 ' + w.fuel); return; }
     u.weaponIdx = idx;
@@ -1043,6 +1082,7 @@
       if (this.slowmo > 0) { this.slowmo--; if (this.slowmo & 1) return; }
     }
     this.t += 16;
+    if (this.preShow > 0) this.preShow--;
     var i;
     this.fx.update();
     this.bg.update(this.t);
@@ -1062,11 +1102,8 @@
     if (this.charging && this.active) {
       var cu = this.active;
       var rate = this.arc ? this.arc.charge : CHARGE_RATE;
-      var mk = cu.ai ? null : this.markOf(cu);
-      // 蓄力条永远匀速走，绝不在标记上停顿或吸附：玩家不想用标记时，
-      // 标记附近的每一点力度都得照样按得出来（试过停 1/3 秒，等于把那一段锁死了）。
-      // 越过标记只响一声梆子当提示。
-      if (mk !== null && cu.power < mk && cu.power + rate >= mk) RZ.SFX.tick();
+      // 蓄力条永远匀速走，经过标记时什么都不发生——不停顿、不吸附，也没有专门的声音或变色
+      // （都试过，都被否了：前者锁死了标记附近的手动微调，后者干扰）。标记只是条上的一根刻度。
       cu.power = Math.min(100, cu.power + rate);
       RZ.SFX.updateCharge(cu.power);
     }
@@ -1379,7 +1416,7 @@
     // 只提示炮口指向，不预测落点——预测线会随蓄力乱跳，反而干扰手感
     var path = this.previewPath();
     if (path) {
-      RZ.drawPreview(ctx, path, RZ.TEAM_COLORS[this.active.team], this.t);
+      RZ.drawPreview(ctx, path, RZ.TEAM_COLORS[(this.preUnit() || this.active).team], this.t);
     } else if (this.guide && this.phase === 'aim' && this.active && !this.active.ai) {
       RZ.drawAimRay(ctx, this.active, RZ.TEAM_COLORS[this.active.team]);
     }

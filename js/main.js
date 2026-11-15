@@ -485,7 +485,7 @@
     // 显示什么由 game.hudState() 决定，这里只负责画上去
     var h = game.hudState();
     setClass('unit-card', 'standby', !h.live);
-    setClass('panel-action', 'standby', !h.live);
+    setClass('panel-action', 'standby', !h.live && !h.pre);
 
     if (h.unit) {
       setText('uc-name', h.name);
@@ -500,8 +500,8 @@
       setStyle('bar-cost', 'width', costPct + '%');
       setText('txt-spent', h.spent);
 
-      var sig = h.unit.index + '|' + h.weaponIdx + '|' + Math.round(h.fuel / 5) + '|' + (h.live ? 1 : 0);
-      if (sig !== lastWeaponSig) { lastWeaponSig = sig; buildWeaponButtons(h.unit, h.live); }
+      var sig = h.unit.index + '|' + h.weaponIdx + '|' + Math.round(h.fuel / 5) + '|' + (h.live ? 1 : h.pre ? 2 : 0);
+      if (sig !== lastWeaponSig) { lastWeaponSig = sig; buildWeaponButtons(h.unit, h.live, h.pre); }
 
       setText('aim-val', h.aim);
       setText('pow-val', h.power);
@@ -520,8 +520,7 @@
       // 经典 / 硬核没有预览（h.mark 为 null），粗线仍然只是「上一发」。
       var marked = h.mark !== null && h.mark !== undefined;
       var at = marked ? h.mark : h.lastPower;
-      setClass('power-bar', 'markable', marked && h.live);
-      setClass('power-bar', 'onmark', marked && h.live && game.charging && Math.abs(h.unit.power - h.mark) < 1.5);
+      setClass('power-bar', 'markable', marked && (h.live || h.pre));
       setHidden('power-mark', !(at > 0));
       if (at > 0) setStyle('power-mark', 'left', at + '%');
       var showLast = marked && h.lastPower > 0 && h.lastPower !== h.mark;
@@ -542,7 +541,7 @@
     }
     setHTML('ticker', tick);
 
-    setText('hint', u && u.ai ? '电脑正在瞄准…'
+    setText('hint', u && u.ai ? (h.pre ? '电脑的回合　可以先调 ↑ ↓ 角度、标力度、选武器' : '电脑正在瞄准…')
       : (h.live && !h.unit.canAfford(h.unit.vehicle.w1) ? '燃料不足　Enter 跳过本回合攒油'
         : '← → 移动　↑ ↓ 角度　空格 蓄力发射　Enter 跳过'));
 
@@ -572,7 +571,7 @@
     }
   }
 
-  function buildWeaponButtons(u, live) {
+  function buildWeaponButtons(u, live, pre) {
     var v = u.vehicle;
     var defs = [
       { tag: '1 · 武器一', w: v.w1 },
@@ -587,8 +586,9 @@
       b.className = 'wbtn' + (u.weaponIdx === i ? ' active' : '') + (afford ? '' : ' locked');
       // 只写耗油：延迟、还能轮到谁，都归玩家自己盘算
       b.innerHTML = '<u>' + d.tag + '</u><b>' + d.w.name + '</b><s>耗油 ' + d.w.fuel + '</s>';
-      b.disabled = !live || !afford;
-      b.onclick = function () { if (live) game.setWeapon(i); };
+      // 电脑的回合里可以先选好武器；油够不够到自己回合再算（那时还会回油）
+      b.disabled = pre ? false : (!live || !afford);
+      b.onclick = function () { if (live || pre) game.setWeapon(i); };
       box.appendChild(b);
     });
   }

@@ -269,6 +269,43 @@ module.exports = function runModeTests(RZ, check, head) {
     check(g.hudState().mark === null && g.setMark(40) === false && g.units[0].markPower === 0, '经典规则没有力度标记');
   }
 
+  // ---------- 电脑回合里预先调整 ----------
+  head('爽快规则：电脑行动时可以先摆好角度 / 标记 / 武器');
+  {
+    const g = arena();
+    const me = g.units[0], foe = g.units[1];
+    me.aim = 40; me.fuel = 30; me.weaponIdx = 0;
+    g.active = foe; g.phase = 'aim';
+    check(g.preUnit() === me && g.hudState().pre === true && g.hudState().live === false, '轮到电脑时，面板仍是自己的车，并标明可以预调');
+    const x0 = me.x, foeAim = foe.aim, foeW = foe.weaponIdx;
+    g.applyHeld({ ArrowUp: true, ArrowLeft: true });
+    check(me.aim === 41 && me.x === x0, '能调角度，但不能移动', `角度 ${me.aim}`);
+    check(g.setMark(73) && me.markPower === 73 && g.nudgeMark(-1) && me.markPower === 72, '能标力度、能微调');
+    g.setWeapon(2);
+    check(me.weaponIdx === 2, '能先选好武器（这时不查油量）');
+    check(foe.aim === foeAim && foe.weaponIdx === foeW && !foe.markPower, '动的是自己的车，不是电脑的');
+    const line = g.previewPath();
+    check(line && Math.abs(line[0] - me.x) < 80, '动过之后预览线亮起来，画的是自己那条');
+    for (let i = 0; i < 200; i++) { if (g.preShow > 0) g.preShow--; }
+    check(g.previewPath() === null, '过一会儿预览线自己收起来');
+    g.charging = true;                                 // 电脑正在蓄力
+    check(g.setMark(60) && me.markPower === 60, '电脑蓄力时照样能标');
+    g.charging = false;
+    const f0 = me.fuel;
+    check(me.fuel === f0 && !me.firedThisTurn, '不花油、不开火');
+    g.hardcore = true;
+    g.adjustAim(1);
+    check(me.aim === 42 && g.setMark(50) === false, '硬核下仍能预调角度和武器，但没有标记');
+  }
+  {
+    const g = mk();
+    const me = g.units[0];
+    g.active = g.units[1]; g.phase = 'aim';
+    const a0 = me.aim;
+    g.applyHeld({ ArrowUp: true }); g.setWeapon(1);
+    check(g.preUnit() === null && me.aim === a0 && me.weaponIdx === 0 && !g.hudState().pre, '经典规则：电脑回合里什么都动不了');
+  }
+
   // ---------- 遗物 ----------
   head('遗物效果');
   {
