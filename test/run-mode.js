@@ -1479,7 +1479,13 @@ module.exports = function runModeTests(RZ, check, head) {
     check(Run.goEndless(s) && !s.over && s.endless === 1 && s.act === 3 && s.step === 0 && s.hp === Run.maxHp(s) && Run.load() !== null, '进无尽：从第四个区域接着走，耐久补满，存档还在');
     check(Run.actOf(s) === Run.ACTS[0] && Run.loopOf(s) === 1, '三个区域轮着来');
     const boss = s.layers[4][0].enemies[0], boss0 = Run.newRun('liehuo', { seed: 'ENDLESS' }).layers[4][0].enemies[0];
-    check(boss.name.indexOf('狂暴') === 0 && boss.hp > boss0.hp * 1.25 && boss.atk > boss0.atk, '无尽里的 Boss 更壮更狠', `${boss0.hp} → ${boss.hp}`);
+    check(boss.name.indexOf('狂暴') === 0 && boss.hp > boss0.hp * 1.8 && boss.atk > boss0.atk * 1.2, '无尽里的 Boss 更壮更狠', `${boss0.hp} → ${boss.hp}`);
+    // 每打穿一个区域，倍率再乘一次（指数涨，不是每圈才涨）
+    const mulAt = (act) => Run.endlessMul({ act });
+    check(mulAt(2).hp === 1 && mulAt(0).atk === 1 && Run.endlessDepth({ act: 2 }) === 0, '通关之前没有无尽倍率');
+    check(Math.abs(mulAt(4).hp / mulAt(3).hp - Run.ENDLESS.hp) < 1e-9 && Math.abs(mulAt(5).atk / mulAt(4).atk - Run.ENDLESS.atk) < 1e-9 && mulAt(5).hp > 3 && mulAt(7).bossHp > 20,
+      '无尽里每个区域都比上一个强一截', `第 3 个区域：耐久 ×${mulAt(5).hp.toFixed(1)} 攻击 ×${mulAt(5).atk.toFixed(1)}`);
+    check(s.layers.every((L) => L.every((n) => !n.enemies || n.type === 'boss' || n.type === 'trial' || (n.mods && n.mods.length === 1))), '无尽里每一场普通战斗和精英战都带词条');
     const elite0 = Run.newRun('liehuo', { seed: 'ENDLESS' }).layers[2][0].enemies[0];      // 第三层第一格固定是一辆精英，好比
     check(s.layers[2][0].enemies[0].hpMul > elite0.hpMul * 2, '别的敌人也一路变强', `精英耐久倍率 ${elite0.hpMul.toFixed(2)} → ${s.layers[2][0].enemies[0].hpMul.toFixed(2)}`);
     check(!Run.goEndless(s), '已经在无尽里了，不能再进一次');

@@ -521,6 +521,18 @@
   Run.actOf = function (state) { return Run.ACTS[state.act % Run.ACTS.length]; };
   /** 无尽模式的第几圈（0 = 还在正常的三个区域里） */
   Run.loopOf = function (state) { return Math.floor(state.act / Run.ACTS.length); };
+  /**
+   * 无尽模式里敌人的额外倍率：通关后每打穿一个区域乘一次（指数涨），不是每圈。
+   * 玩家的流派是乘出来的，敌人只按层数线性涨的话，通关时「糊了」的一身能平推好几圈——试玩时就是这样。
+   * 普通敌人每个区域耐久 ×1.5、攻击 ×1.25；Boss 耐久涨得更快（×1.9），不然必杀两轮就没了。
+   * 拿一身很强的流派让代打去打：第 1 个区域还算轻松，第 3 个开始吃力，第 5 个基本过不去。
+   */
+  Run.ENDLESS = { hp: 1.5, atk: 1.25, bossHp: 1.9 };
+  Run.endlessDepth = function (state) { return Math.max(0, state.act - Run.ACTS.length + 1); };   // 无尽里的第几个区域（0 = 还没通关）
+  Run.endlessMul = function (state) {
+    var n = Run.endlessDepth(state);
+    return { hp: Math.pow(Run.ENDLESS.hp, n), atk: Math.pow(Run.ENDLESS.atk, n), bossHp: Math.pow(Run.ENDLESS.bossHp, n) };
+  };
 
   function enemyDef(state, step, kind) {
     var d = depthOf(state, step), asc = state.asc;
@@ -528,8 +540,8 @@
     var v = pick(pool);
     var e = {
       vid: v.id, name: v.name,
-      hpMul: (0.44 + 0.045 * d) * (1 + asc * 0.08),
-      atkMul: (0.52 + 0.03 * d) * (1 + asc * 0.06),
+      hpMul: (0.44 + 0.045 * d) * (1 + asc * 0.08) * Run.endlessMul(state).hp,
+      atkMul: (0.52 + 0.03 * d) * (1 + asc * 0.06) * Run.endlessMul(state).atk,
       mods: { w1: [], w2: [], ss: [] }, perks: {}
     };
     if (kind === 'elite') {
@@ -623,7 +635,8 @@
       node.enemies.push(enemyDef(state, step, kind));
     }
     // 地图词条：整局的头一场不出，之后普通战斗四成、精英六成
-    if (d >= 1) setMods(node, rollMods(node.mapId, kind === 'elite' ? 0.6 : 0.4));
+    // 无尽模式里每一场都带词条
+    if (d >= 1) setMods(node, rollMods(node.mapId, Run.endlessDepth(state) ? 1 : kind === 'elite' ? 0.6 : 0.4));
     return node;
   }
 
@@ -642,11 +655,11 @@
 
   function bossNode(state) {
     var act = Run.actOf(state), b = act.boss, asc = state.asc;
-    var loop = Run.loopOf(state);                     // 无尽模式第几圈：Boss 每圈再壮 30%、再狠 12%
+    var loop = Run.endlessDepth(state), em = Run.endlessMul(state);   // 无尽模式：Boss 跟着每个区域的倍率一起涨
     var node = { type: 'boss', mapId: b.map, enemies: [], gold: 120 + state.act * 40 };
     node.enemies.push({
       vid: b.vid, name: (loop ? '狂暴·' : '') + b.name, boss: true, kit: b.kit, scale: b.scale,
-      hp: Math.round(b.hp * (1 + asc * 0.08) * (1 + loop * 0.3)), atk: Math.round(b.atk * (1 + asc * 0.05) * (1 + loop * 0.12)),
+      hp: Math.round(b.hp * (1 + asc * 0.08) * em.bossHp), atk: Math.round(b.atk * (1 + asc * 0.05) * em.atk),
       mods: { w1: (b.mods.w1 || []).slice(), w2: (b.mods.w2 || []).slice(), ss: (b.mods.ss || []).slice() },
       perks: copy(b.perks)
     });

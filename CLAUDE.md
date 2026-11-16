@@ -146,8 +146,10 @@
 - **每日挑战**：`Run.newDaily()`，种子 `D20261115`（本地日期），车也由种子定（`dailyVehicle`，不看解锁）。
   成绩在 `meta.daily`（只留当天）和 `meta.dailyWins`。
 - **无尽**：`Run.goEndless(state)` 只对「刚通关、还没进过无尽」的那一局有效；之后 `state.act` 一直往上涨，
-  区域定义用 `Run.actOf(state)`（取模），**别再写 `Run.ACTS[state.act]`**。敌人强度本来就按 `act * 5 + step` 线性涨，
-  Boss 另按 `Run.loopOf()` 每圈 +30% 耐久。`Run.finish()` 对同一局可能跑两次（通关一次、倒在无尽里一次）：
+  区域定义用 `Run.actOf(state)`（取模），**别再写 `Run.ACTS[state.act]`**。敌人除了按 `act * 5 + step` 线性涨，
+  无尽里**每打穿一个区域再指数乘一次**（`Run.ENDLESS`：耐久 ×1.5、攻击 ×1.25、Boss 耐久 ×1.9，见 `endlessMul()`），每场都带词条。
+  第一版只有线性涨 + Boss 每圈 +30%，项目主人通关后的流派平推了好几圈——玩家的强度是乘出来的，敌人也得乘。
+  调这几个数跑 `node test/endless-sim.js`：拼一身很强的流派让代打逐个区域打，看胜率曲线。`Run.finish()` 对同一局可能跑两次（通关一次、倒在无尽里一次）：
   靠 `state.paid` 只补发多出来的勋章，靠 `state.histId` 改同一条历史。
 - **成就** `Run.ACHIEVEMENTS`：`test(meta, state, ctx)`，`ctx.game` / `ctx.node` 只在刚打完一场时有，`ctx.end` 只在结束时为真。
   `Run.checkAch()` 在 `afterBattle` 和 `finish` 里各查一遍，勋章当场进 `meta.medals`。判定函数不许抛错（有测试）。

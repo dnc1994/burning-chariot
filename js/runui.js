@@ -276,7 +276,9 @@
   function sideHTML() {
     var v = Run.playerVehicle(state), hpMax = v.hp, i;
     var pips = '', loop = Run.loopOf(state), cycle = state.act % Run.ACTS.length;
-    if (loop) pips += '<div class="act-row cur endless"><span>无尽 第 ' + loop + ' 圈</span></div>';
+    var deep = Run.endlessDepth(state), em = Run.endlessMul(state);
+    if (deep) pips += '<div class="act-row cur endless"><span>无尽 第 ' + deep + ' 个区域</span></div>' +
+      '<p class="endless-mul">敌人耐久 ×' + em.hp.toFixed(1) + '　攻击 ×' + em.atk.toFixed(1) + '　Boss 耐久 ×' + em.bossHp.toFixed(1) + '<br>每打穿一个区域再乘一次</p>';
     for (var a = 0; a < Run.ACTS.length; a++) {
       pips += '<div class="act-row' + (a === cycle ? ' cur' : '') + '"><span>' + Run.ACTS[a].name + '</span>';
       for (i = 0; i < Run.LAYERS_PER_ACT; i++) {
@@ -386,7 +388,7 @@
   function choiceHTML() {
     var list = Run.choices(state), cards = '';
     list.forEach(function (n, i) { cards += nodeCard(n, i); });
-    return '<div class="run-main"><h3 class="run-title">' + (Run.loopOf(state) ? '无尽 · ' : '') + Run.actOf(state).name + ' · 第 ' + (state.step + 1) + ' / ' +
+    return '<div class="run-main"><h3 class="run-title">' + (Run.endlessDepth(state) ? '无尽 ' + Run.endlessDepth(state) + ' · ' : '') + Run.actOf(state).name + ' · 第 ' + (state.step + 1) + ' / ' +
       Run.LAYERS_PER_ACT + ' 层<small>选一个去处</small></h3><div class="nodes n' + list.length + '">' + cards + '</div></div>';
   }
 
@@ -492,7 +494,8 @@
         row('获得勋章', '+' + state.earned, 'dmg') +
       '</div>' +
       (state.won && !state.endless && state.asc < Run.MAX_ASC ? '<p class="over-line">已开放进阶 ' + (state.asc + 1) + '。</p>' : '') +
-      (Run.canEndless(state) ? '<p class="over-line">还没打够？带着现在这一身接着打——三个区域轮着来，敌人一路变强，直到倒下。倒下也算通关。</p>' : '') +
+      (Run.canEndless(state) ? '<p class="over-line">还没打够？带着现在这一身接着打——三个区域轮着来，每打穿一个，敌人耐久 ×' + Run.ENDLESS.hp + '、攻击 ×' + Run.ENDLESS.atk +
+        '，Boss 涨得更快，每场都带词条。倒下也算通关。</p>' : '') +
       (note ? '<p class="over-line over-note">' + note + '</p>' : '') +
       '<textarea id="bk-code" class="share-box" readonly>' + esc(shareText()) + '</textarea>' +
       '<div class="row over-btns">' +
