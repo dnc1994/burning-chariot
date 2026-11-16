@@ -1041,9 +1041,10 @@ module.exports = function runModeTests(RZ, check, head) {
     const s = Run.newRun('liehuo'); s.battles = 5; s.bosses = 1;
     Run.finish(s, false);
     const m = Run.loadMeta();
-    check(s.over && !s.won && s.earned === 8 && m.medals === 8 && m.runs === 1, '失败也按战绩发勋章', `+${s.earned}`);
+    check(s.over && !s.won && s.earned === 10 && m.medals === 10 && m.runs === 1, '失败也按战绩发勋章（5 场 + 1 个 Boss = 8，外加成就「碾碎碾压者」2 枚）', `+${s.earned}`);
     check(Run.load() === null, '远征结束后清掉存档');
-    check(Run.unlock(m, 'honglong') && m.medals === 2 && m.unlocked.indexOf('honglong') >= 0, '勋章解锁新战车');
+    check(Run.unlock(m, 'honglong') && m.medals === 4 && m.unlocked.indexOf('honglong') >= 0, '勋章解锁新战车');
+    m.medals = 2; Run.saveMeta(m);
     check(Run.unlock(m, 'aodin') === false, '勋章不够不能解锁');
     const w = Run.newRun('liehuo'); w.act = 2; w.step = 4;
     Run.advance(w);
@@ -1159,7 +1160,8 @@ module.exports = function runModeTests(RZ, check, head) {
   head('v1.4：新敌人');
   {
     const st = Run.newRun('liehuo'); st.act = 1; st.step = 3;
-    const find = (kind) => { for (let i = 0; i < 800; i++) for (const layer of Run.genLayers(st)) for (const n of layer) if (n.enemies && n.enemies.some((e) => e.kind === kind)) return n; };
+    // 路线由种子决定，所以每次换一个种子再生成
+    const find = (kind) => { for (let i = 0; i < 800; i++) { st.seed = 'T' + i; for (const layer of Run.genLayers(st)) for (const n of layer) if (n.enemies && n.enemies.some((e) => e.kind === kind)) return n; } };
     const tn = find('turret'), sn = find('swarm'), bn = find('bomber');
     check(tn && sn && bn, '路线上会刷出炮台、小车群、自爆车');
     check(sn.enemies.length >= 3 && sn.enemies.every((e) => e.kind === 'swarm'), '小车群至少三辆', `${sn.enemies.length} 辆`);
@@ -1319,6 +1321,186 @@ module.exports = function runModeTests(RZ, check, head) {
     old.node = { type: 'fight', mapId: 'dry', enemies: [foe()], gold: 10 };
     const og = new RZ.Game(Run.battleOpts(old));
     check(og.mods.length === 0 && og.roundLimit === 0, 'v1.3 存档里的节点（没有词条字段）照样能打');
+  }
+
+  // ================= v1.5 再来一局 =================
+  const doneGame = (over) => Object.assign({ units: [{ alive: true, items: [], hp: 500 }], result: 0, round: 5, style: { gold: 0, tags: {} } }, over || {});
+  const freshMeta = () => Run.saveMeta({ medals: 0, unlocked: Run.STARTERS.slice(), asc: 0, wins: 0, runs: 0, best: 0 });
+
+  head('v1.5：种子');
+  {
+    const a = Run.newRun('liehuo', { seed: 'abc 123' }), b = Run.newRun('liehuo', { seed: 'ABC123' }), c = Run.newRun('liehuo', { seed: 'XYZ789' });
+    check(a.seed === 'ABC123' && Run.cleanSeed(' ab-c_1 2!3 ') === 'ABC123' && Run.cleanSeed('') === '', '种子码去空白、转大写、只留字母数字');
+    check(JSON.stringify(a.layers) === JSON.stringify(b.layers), '同一个种子：路线和敌人一模一样');
+    check(JSON.stringify(a.layers) !== JSON.stringify(c.layers), '换个种子就不一样');
+    check(/^[A-Z2-9]{6}$/.test(Run.newRun('liehuo').seed) && Run.newRun('liehuo').seed !== Run.newRun('liehuo').seed, '不填种子就随机给一个六位的');
+    // 同样的选择 → 同样的奖励
+    const fight = (s) => { Run.enter(s, 0); Run.afterBattle(s, doneGame()); return JSON.stringify(s.pending.choices); };
+    check(fight(a) === fight(b), '同一个种子、同样的选择：战后奖励也一样');
+    Run.takeReward(a, -1); Run.takeReward(b, -1);
+    // 商店：货架一样；刷新的次数不影响后面的路线
+    const shopOf = (s) => { s.pending = null; s.layers[s.step] = [{ type: 'shop' }]; Run.enter(s, 0); return s; };
+    shopOf(a); shopOf(b);
+    check(JSON.stringify(a.pending.stock) === JSON.stringify(b.pending.stock), '同一个种子：商店货架一样');
+    a.gold = 999; Run.reroll(a); Run.reroll(a); Run.reroll(a);
+    b.gold = 999; Run.reroll(b);
+    check(JSON.stringify(a.pending.stock) !== JSON.stringify(b.pending.stock), '刷新会换货');
+    Run.reroll(b); Run.reroll(b);
+    check(JSON.stringify(a.pending.stock) === JSON.stringify(b.pending.stock), '刷新到第三次，两边又对上了');
+    const a2 = Run.newRun('liehuo', { seed: 'ABC123' }); a2.act = 1; a2.layers = Run.genLayers(a2);
+    const b2 = Run.newRun('liehuo', { seed: 'ABC123' }); b2.gold = 999; shopOf(b2); Run.reroll(b2); Run.reroll(b2); b2.act = 1; b2.layers = Run.genLayers(b2);
+    check(JSON.stringify(a2.layers) === JSON.stringify(b2.layers), '在商店里刷新几次，不会把后面的路线带偏');
+    // 事件
+    const e1 = Run.newRun('liehuo', { seed: 'EV' }), e2 = Run.newRun('liehuo', { seed: 'EV' });
+    [e1, e2].forEach((s) => { s.layers[0] = [{ type: 'event' }]; Run.enter(s, 0); });
+    check(e1.pending.id === e2.pending.id, '同一个种子：遇到的事件一样');
+    // 不影响别处的随机
+    const r1 = Math.random(); Run.genLayers(a); const r2 = Math.random();
+    check(r1 !== r2, '种子只管远征自己的骰子，不动 Math.random');
+    // 老存档没有种子
+    const old = Run.newRun('liehuo'); delete old.seed; delete old.daily; delete old.endless; delete old.t0;
+    const l1 = JSON.stringify(Run.genLayers(old)), l2 = JSON.stringify(Run.genLayers(old));
+    check(l1 !== l2 && Run.enter(old, 0) === true, 'v1.4 的老存档没有种子：照样随机、照样能打');
+    // 每日挑战
+    const d1 = Run.newDaily('2026-11-15'), d2 = Run.newDaily('2026-11-15'), d3 = Run.newDaily('2026-11-16');
+    check(d1.seed === 'D20261115' && d1.daily === '2026-11-15' && d1.vehicleId === d2.vehicleId && JSON.stringify(d1.layers) === JSON.stringify(d2.layers), '每日挑战：同一天同一辆车、同一条路线');
+    check(JSON.stringify(d1.layers) !== JSON.stringify(d3.layers), '第二天换一局');
+    const cars = new Set(); for (let i = 1; i <= 28; i++) cars.add(Run.dailyVehicle('2026-02-' + (i < 10 ? '0' : '') + i));
+    check(cars.size >= 6, '每日挑战会轮到各种车', `28 天里 ${cars.size} 种`);
+    check(/^\d{4}-\d{2}-\d{2}$/.test(Run.dateKey()) && Run.dateKey(new Date(2026, 0, 5)) === '2026-01-05', '日期按本地时间取');
+  }
+
+  head('v1.5：历史与每日成绩');
+  {
+    freshMeta();
+    const s = Run.newRun('liehuo', { seed: 'HIST01' }); s.battles = 4; s.bosses = 1; s.gold = 100; s.relics = ['turbo', 'crit']; s.act = 1; s.step = 2;
+    Run.finish(s, false);
+    let m = Run.loadMeta();
+    const h = m.history[0];
+    check(m.history.length === 1 && h.vid === 'liehuo' && h.won === false && h.act === 1 && h.step === 2 && h.seed === 'HIST01' && h.relics.join() === 'turbo,crit', '打完一局记进历史');
+    check(h.score === 4 * 100 + 500 + 2 * 25 + 50 && s.score === h.score, '分数 = 场数、Boss、遗物、金币加起来', `${h.score}`);
+    for (let i = 0; i < 25; i++) { const t = Run.newRun('liehuo'); t.battles = i; Run.finish(t, false); }
+    m = Run.loadMeta();
+    check(m.history.length === Run.HISTORY_MAX && m.history[0].battles === 24 && m.runs === 26, '历史只留最近 20 局，最新的在最前');
+    const w = Run.newRun('honglong'); w.act = 2; w.step = 4; Run.advance(w);
+    m = Run.loadMeta();
+    check(m.history[0].won === true && m.wonWith.join() === 'honglong' && m.history[0].score >= 1500, '通关记一笔，也记下是哪辆车');
+    // 每日
+    freshMeta();
+    const d = Run.newDaily('2026-11-15'); d.battles = 3; Run.finish(d, false);
+    const d2 = Run.newDaily('2026-11-15'); d2.battles = 1; Run.finish(d2, false);
+    m = Run.loadMeta();
+    check(m.daily.date === '2026-11-15' && m.daily.tries === 2 && m.daily.best === 315 && !m.daily.won, '每日挑战可以反复打，记最好的一次', `${m.daily.tries} 次，最高 ${m.daily.best}`);
+    const d3 = Run.newDaily('2026-11-15'); d3.act = 2; d3.step = 4; Run.advance(d3);
+    m = Run.loadMeta();
+    check(m.daily.won && m.dailyWins === 1 && m.ach.daily, '通关每日挑战：记一次，也拿到成就');
+    const d4 = Run.newDaily('2026-11-16'); Run.finish(d4, false);
+    m = Run.loadMeta();
+    check(m.daily.date === '2026-11-16' && m.daily.tries === 1 && m.dailyWins === 1, '换了一天，成绩重新记');
+    // 老存档 / 进度码
+    Run._storeSet('rz-meta', JSON.stringify({ medals: 3, unlocked: ['liehuo'], asc: 1, wins: 1, runs: 2, best: 4 }));
+    m = Run.loadMeta();
+    check(m.medals === 3 && m.history.length === 0 && m.seen.relics.length === 0 && typeof m.ach === 'object' && m.daily === null && m.wonWith.length === 0, 'v1.4 的局外存档读进来：新字段补成空的，旧的不丢');
+    Run._storeSet('rz-meta', JSON.stringify({ medals: 3, history: 'oops', seen: [1, 2], ach: [], daily: 7, wonWith: ['nope', 'liehuo'] }));
+    m = Run.loadMeta();
+    check(m.history.length === 0 && m.seen.mods.length === 0 && !Array.isArray(m.ach) && m.daily === null && m.wonWith.join() === 'liehuo', '新字段写坏了也能读（按空的处理）');
+    freshMeta();
+    const x = Run.newRun('liehuo', { seed: '中文不行ok' }); x.battles = 2; Run.finish(x, false);
+    const code = Run.exportCode();
+    freshMeta();
+    const back = Run.importCode(code);
+    check(back.ok && Run.loadMeta().history.length === 1 && Run.loadMeta().history[0].seed === 'OK', '历史跟着进度码一起带走');
+  }
+
+  head('v1.5：图鉴');
+  {
+    freshMeta();
+    const s = Run.newRun('liehuo');
+    s.relics = ['turbo']; s.mods.w1 = ['heavy', 'chain'];
+    s.pending = { kind: 'shop', stock: [{ type: 'relic', id: 'crit', cost: 0 }] }; Run.buy(s, 0); s.pending = null;
+    s.relics = ['turbo'];                                    // 「暴击芯片」后来被换走了
+    s.node = { type: 'fight', gold: 10, mods: ['night'], enemies: [{ kind: 'turret' }, { boss: true, kit: 'queen' }, {}] };
+    Run.afterBattle(s, doneGame());
+    const m = Run.loadMeta();
+    check(m.seen.relics.sort().join() === 'crit,turbo', '拿到过的遗物进图鉴，后来丢掉的也算');
+    check(m.seen.mods.sort().join() === 'chain,heavy', '装过的改造进图鉴');
+    check(m.seen.foes.sort().join() === 'boss:queen,kind:turret' && m.seen.mapMods.join() === 'night', '打过的特殊敌人、Boss 和词条进图鉴');
+    Run.afterBattle(Object.assign(s, { pending: null, node: s.node }), doneGame());
+    check(Run.loadMeta().seen.relics.length === 2, '重复见到不重复记');
+  }
+
+  head('v1.5：成就');
+  {
+    const ids = Run.ACHIEVEMENTS.map((a) => a.id);
+    check(new Set(ids).size === ids.length && ids.length >= 20 && Run.ACHIEVEMENTS.every((a) => a.name && a.desc && a.medals > 0), '一组成就，各不重名，都有说明和勋章', `${ids.length} 个`);
+    freshMeta();
+    const s = Run.newRun('liehuo');
+    s.node = { type: 'fight', gold: 10, enemies: [{}] };
+    s.hp = 500;
+    Run.afterBattle(s, doneGame({ style: { gold: 0, tags: { ringout: true } } }));
+    let m = Run.loadMeta();
+    check(m.ach.first && m.ach.ringout && m.ach.flawless && !m.ach.barrel && !m.ach.win, '打完一场：该达成的达成，没做到的不给');
+    const gain = Run.achById('first').medals + Run.achById('ringout').medals + Run.achById('flawless').medals;
+    check(m.medals === gain && s.pending.ach.sort().join() === 'first,flawless,ringout', '成就当场发勋章，并写在这一场的结算里', `+${gain}`);
+    s.pending = null; s.node = { type: 'fight', gold: 10, enemies: [{}] };
+    Run.afterBattle(s, doneGame({ style: { gold: 0, tags: { ringout: true } } }));
+    check(Run.loadMeta().medals === gain && !s.pending.ach, '同一个成就只算一次');
+    s.pending = null; s.node = { type: 'fight', gold: 10, enemies: [{}] }; s.hp = 600;
+    Run.afterBattle(s, doneGame({ units: [{ alive: true, items: [], hp: 300 }], round: 2 }));
+    m = Run.loadMeta();
+    check(m.ach.quick && s.pending.ach.join() === 'quick', '两轮内打赢：速战速决');
+    // 结束时的成就
+    freshMeta();
+    const w = Run.newRun('liehuo', { hardcore: true }); w.act = 2; w.step = 4; w.bosses = 3; w.battles = 9;
+    Run.advance(w);
+    m = Run.loadMeta();
+    check(m.ach.win && m.ach.hardcore && m.ach.boss1 && m.ach.boss2 && !m.ach.asc3 && w.endAch.indexOf('win') >= 0, '通关时结算通关类成就');
+    const base = 9 + 9 + 10;
+    check(w.earned === base + w.achMedals && m.medals === w.earned, '结算画面的勋章 = 战绩 + 这一局达成的成就', `${base} + ${w.achMedals}`);
+    // 每个成就的判定函数在各种 ctx 下都不抛错
+    let threw = 0;
+    Run.ACHIEVEMENTS.forEach((a) => { [{}, { end: true }, { game: doneGame(), node: { type: 'boss' }, hpBefore: 1, hpAfter: 1 }].forEach((c) => {
+      try { a.test(Run.loadMeta(), Run.newRun('liehuo'), c); } catch (e) { threw++; } }); });
+    check(threw === 0, '成就判定在战斗中 / 结束时 / 平时都不会出错');
+    // 车库主人
+    freshMeta();
+    ['liehuo', 'honglong', 'tuoer', 'aodin', 'landeng'].forEach((v) => { const t = Run.newRun(v); t.act = 2; t.step = 4; Run.advance(t); });
+    check(Run.loadMeta().ach.garage && Run.loadMeta().wonWith.length === 5, '用五辆不同的车通关：车库主人');
+  }
+
+  head('v1.5：无尽模式');
+  {
+    freshMeta();
+    const s = Run.newRun('liehuo', { seed: 'ENDLESS' }); s.battles = 12; s.bosses = 2; s.act = 2; s.step = 4; s.hp = 100;
+    check(!Run.canEndless(s), '没通关不能进无尽');
+    Run.advance(s);
+    const paid = s.paid, medals1 = Run.loadMeta().medals;
+    check(s.over && s.won && Run.canEndless(s), '通关之后可以接着打');
+    check(Run.goEndless(s) && !s.over && s.endless === 1 && s.act === 3 && s.step === 0 && s.hp === Run.maxHp(s) && Run.load() !== null, '进无尽：从第四个区域接着走，耐久补满，存档还在');
+    check(Run.actOf(s) === Run.ACTS[0] && Run.loopOf(s) === 1, '三个区域轮着来');
+    const boss = s.layers[4][0].enemies[0], boss0 = Run.newRun('liehuo', { seed: 'ENDLESS' }).layers[4][0].enemies[0];
+    check(boss.name.indexOf('狂暴') === 0 && boss.hp > boss0.hp * 1.25 && boss.atk > boss0.atk, '无尽里的 Boss 更壮更狠', `${boss0.hp} → ${boss.hp}`);
+    const elite0 = Run.newRun('liehuo', { seed: 'ENDLESS' }).layers[2][0].enemies[0];      // 第三层第一格固定是一辆精英，好比
+    check(s.layers[2][0].enemies[0].hpMul > elite0.hpMul * 2, '别的敌人也一路变强', `精英耐久倍率 ${elite0.hpMul.toFixed(2)} → ${s.layers[2][0].enemies[0].hpMul.toFixed(2)}`);
+    check(!Run.goEndless(s), '已经在无尽里了，不能再进一次');
+    // 打穿一个区域
+    s.step = 4; s.battles += 5; s.bosses++;
+    Run.advance(s);
+    check(!s.over && s.act === 4 && s.endless === 2 && Run.actOf(s) === Run.ACTS[1], '无尽没有尽头：打穿一个区域接着是下一个');
+    // 倒下
+    Run.finish(s, false);
+    const m = Run.loadMeta();
+    check(s.over && s.won, '倒在无尽里不算失败');
+    const extra = 5 + 3;
+    check(s.paid === paid + extra && m.medals === medals1 + extra + (s.achMedals || 0), '只补发多出来的勋章，通关那份不再发一次', `+${extra} 战绩 +${s.achMedals || 0} 成就`);
+    check(m.history.length === 1 && m.history[0].endless === 1 && m.history[0].won && m.runs === 1 && m.wins === 1, '历史里还是同一局，写明无尽打穿了几个区域');
+    check(m.endlessBest === 1 && m.ach.endless1 && !m.ach.endless3, '记下无尽的最好成绩，拿到「意犹未尽」');
+    check(!Run.canEndless(s), '倒下之后不能再续');
+    // 电脑代打：进了无尽也能一直打到倒下
+    const e = Run.newRun('liehuo', { seed: 'AI' }); e.act = 2; e.step = 4; Run.advance(e); Run.goEndless(e);
+    e.node = e.layers[0][0];
+    const g = new RZ.Game(Run.battleOpts(e, 'hard'));
+    check(g.units.length >= 2 && g.units[1].maxHp > 0, '无尽里的战斗照常开得起来');
   }
 
   head('远征：电脑代打跑完整局');

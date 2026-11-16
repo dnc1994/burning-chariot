@@ -129,6 +129,26 @@
   `chest` 直接给一个 `from: 'chest'` 的 reward；`altar` 是 `Run.SPECIAL_EVENTS` 里的事件，不进随机池。
 - 老存档的节点没有 `mods` / `limit` / `kind`，`battleOpts` 都按缺省处理（有测试）。
 
+### 种子、每日、无尽、成就、图鉴、历史（v1.5）
+
+- **种子是无状态的**：`seeded(state, tag, fn)` 用「`state.seed` + 这是哪一步」现算一个随机源，跑完 `fn` 就还回去。
+  不存随机数发生器的状态，所以玩家在商店多刷新几次不会把后面的路线带偏（有测试）。`genLayers` 的 tag 是区域号；
+  `enter` / `afterBattle` / `reroll` / `eventChoose` / `rest` 在文件末尾用 `wrapSeed()` 包了一层，tag 里带 `act.step`。
+  **新加会掷骰子的入口也要包**，不然同一个种子打不出同一局。战斗里的随机（风、暴击、地形）不归种子管。
+  测试用 `Run.setRandom(fn)` 接管随机源时种子不插手；老存档没有 `seed`，照旧走 `Math.random`。
+- 路线由种子定了，所以**测试里对同一个 state 反复 `genLayers` 得到的是同一份**——要采样就每次换 `state.seed`。
+- **每日挑战**：`Run.newDaily()`，种子 `D20261115`（本地日期），车也由种子定（`dailyVehicle`，不看解锁）。
+  成绩在 `meta.daily`（只留当天）和 `meta.dailyWins`。
+- **无尽**：`Run.goEndless(state)` 只对「刚通关、还没进过无尽」的那一局有效；之后 `state.act` 一直往上涨，
+  区域定义用 `Run.actOf(state)`（取模），**别再写 `Run.ACTS[state.act]`**。敌人强度本来就按 `act * 5 + step` 线性涨，
+  Boss 另按 `Run.loopOf()` 每圈 +30% 耐久。`Run.finish()` 对同一局可能跑两次（通关一次、倒在无尽里一次）：
+  靠 `state.paid` 只补发多出来的勋章，靠 `state.histId` 改同一条历史。
+- **成就** `Run.ACHIEVEMENTS`：`test(meta, state, ctx)`，`ctx.game` / `ctx.node` 只在刚打完一场时有，`ctx.end` 只在结束时为真。
+  `Run.checkAch()` 在 `afterBattle` 和 `finish` 里各查一遍，勋章当场进 `meta.medals`。判定函数不许抛错（有测试）。
+- **图鉴** `meta.seen`：`noteSeen(meta, state)` 每打完一场并一次。被熔掉 / 换走的遗物靠 `state.everRelics` 记着。
+- **历史** `meta.history`：最近 `Run.HISTORY_MAX` 局，新的在前。它跟着进度码走，别往里塞大东西。
+- `normalizeMeta()` 负责给老存档补上这些字段、把写坏的按空的处理——加 meta 字段时照着补一行。
+
 ### 存档与进度码（`js/run.js`）
 
 - 局外存档 `rz-meta` 每次写入前把上一份挪到 `rz-meta-bak`；主档读不出来就退回备份。
@@ -187,7 +207,7 @@ node test/balance-sim.js   # 远征平衡模拟：电脑代打 N 局，看能走
 | 轮次 | 每轮每人恰好一次、最多连着两手、阵亡后照常轮转 |
 | 界面 | 不泄露出手顺序与对手读数、HUD 每帧 DOM 写入量、道具点两下才用掉 |
 | 收尾 | 暂停打断蓄力后电脑要能接着打、分出胜负后对局必须停止 |
-| 爽快规则与远征 | `test/run-mode.js`：没漏进经典规则、击飞、油桶连锁、预览、遗物、改造、场地区域、Boss 招式、进度码、远征状态机、战车被动、联动、诅咒、稀有改造、商店刷新、事件、地图词条、夜战、陨石雨、新敌人、新节点、电脑代打跑完整局 |
+| 爽快规则与远征 | `test/run-mode.js`：没漏进经典规则、击飞、油桶连锁、预览、遗物、改造、场地区域、Boss 招式、进度码、远征状态机、战车被动、联动、诅咒、稀有改造、商店刷新、事件、地图词条、夜战、陨石雨、新敌人、新节点、种子、每日挑战、历史、图鉴、成就、无尽模式、电脑代打跑完整局 |
 
 浏览器侧自检页（配合 headless Chrome 截图，见第 6 节）：
 
@@ -195,7 +215,7 @@ node test/balance-sim.js   # 远征平衡模拟：电脑代打 N 局，看能走
 test/render-check.html?map=sky&n=4&frames=900
 test/ui-check.html?stage=title|setup|codex|battle|fire|aimline|pause|enemy|items|itemarmed|ultimate|result
 test/perf-check.html?n=200
-test/run-check.html?stage=hub|backup|import|map|world|boss|reward|shop|rest|event|altar|over|battle|charge|bossfight|field|night|flow
+test/run-check.html?stage=hub|codex|ach|hist|backup|import|map|world|boss|reward|shop|rest|event|altar|over|won|battle|charge|bossfight|field|night|flow
 test/sfx-check.html        # 音效试听 + 离线量峰值；headless 下 --dump-dom 看 #report
 test/weapon-check.html?f=6 # 所有武器的弹体与落地效果总览
 ```
@@ -398,7 +418,8 @@ CH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
   v1.2 收尾时单独模拟三个 Boss（王牌代打、随机流派、85% 耐久进场，各 24 场）：
   碾压者约 90%，风暴女王约 40%，终焉战车约 20%。后两个偏难，但代打不会集火护卫、
   也不会挑流派，真人应该好不少——等试玩反馈再动，别继续对着模拟调。
-- **进度码不压缩**：带一局进行中的远征时约 2.7KB，放进网址够用但不短。
+- **进度码不压缩**：带一局进行中的远征时约 2.7KB；v1.5 起局外存档里多了历史（最多 20 局）和图鉴，
+  打久了会再长 3~4KB，放进网址偏长——真嫌长就压缩，或者导出时不带历史。
 - **道具会拉长比赛**：双方都带道具时，深海遗迹的对局均长从 25 回合涨到 35，
   p95 从 43 涨到 75。主要是双方轮流回血。如果想收一收，旋钮在
   `game.js` 的 `aiUseSupportItems()`（电脑回血的血量阈值）或道具的回复比例。

@@ -10,7 +10,60 @@
 
   var Run = {};
   var rand = Math.random;
-  Run.setRandom = function (fn) { rand = fn || Math.random; };
+  var forced = false;            // 测试用 setRandom 接管了随机源：这时种子不插手
+  Run.setRandom = function (fn) { rand = fn || Math.random; forced = !!fn; };
+
+  // ================= 种子 =================
+  // 一局远征的路线、敌人、奖励、商店、事件都由 state.seed 决定：同一个种子 + 同样的选择 = 同一局。
+  // 战斗里的风、暴击、地形不在内（那些走 Math.random）。
+  // 做法是「无状态」的：每个要掷骰子的地方用「种子 + 这是哪一步」现算一个随机源（seeded()），
+  // 不存随机数发生器的状态——所以在商店里多刷新几次，不会把后面的路线带偏。
+  function hashStr(str) {
+    var h = 2166136261;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function mulberry32(a) {
+    return function () {
+      a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  /** 在「种子 + tag」定下的随机源里跑 fn。老存档没有种子、或者测试接管了随机源时，原样跑 */
+  function seeded(state, tag, fn) {
+    if (forced || !state || !state.seed) return fn();
+    var prev = rand;
+    rand = mulberry32(hashStr(state.seed + '|' + tag));
+    try { return fn(); } finally { rand = prev; }
+  }
+  function at(state) { return state.act + '.' + state.step; }
+
+  var SEED_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';    // 去掉了 0/O、1/I 这些容易看错的
+  Run.randomSeed = function () {
+    var out = '';
+    for (var i = 0; i < 6; i++) out += SEED_CHARS.charAt((Math.random() * SEED_CHARS.length) | 0);
+    return out;
+  };
+  /** 玩家手敲的种子码：去空白、转大写、只留字母数字，最长 16 位。空的返回 '' */
+  Run.cleanSeed = function (text) {
+    return String(text || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+  };
+  /** 每日挑战：种子按本地日期定，所有人同一天拿到同一局；连开哪辆车也由种子定（顺便让人试试没解锁的车） */
+  Run.dateKey = function (d) {
+    d = d || new Date();
+    var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate());
+  };
+  Run.dailySeed = function (dateKey) { return 'D' + (dateKey || Run.dateKey()).replace(/-/g, ''); };
+  Run.dailyVehicle = function (dateKey) {
+    return RZ.VEHICLES[hashStr(Run.dailySeed(dateKey) + '|V') % RZ.VEHICLES.length].id;
+  };
+  Run.newDaily = function (dateKey) {
+    dateKey = dateKey || Run.dateKey();
+    return Run.newRun(Run.dailyVehicle(dateKey), { seed: Run.dailySeed(dateKey), daily: dateKey });
+  };
 
   function pick(arr) { return arr[(rand() * arr.length) | 0]; }
   function sample(arr, n) {
@@ -236,6 +289,7 @@
   Run.STARTERS = ['liehuo', 'tiejingang', 'beibeilong'];   // 一开始就能用的三辆
   Run.UNLOCK_COST = 6;                                      // 其余每辆花 6 枚勋章
   Run.MAX_ASC = 5;
+  Run.HISTORY_MAX = 20;                                     // 历史只留最近 20 局（进度码里带着它，太长了网址放不下）
 
   // ================= 局外存档 =================
   var memStore = {};
@@ -274,6 +328,16 @@
     m.best = Math.max(0, m.best | 0);          // 打赢过的最多场数
     m.lastBackup = m.lastBackup || 0;          // 上次导出进度的时间
     m.sinceBackup = Math.max(0, m.sinceBackup | 0);   // 上次导出之后又打完了几次远征
+    // ---- v1.5：图鉴、成就、历史、每日挑战。老存档里没有，补成空的 ----
+    var list = function (x) { return Array.isArray(x) ? x.filter(function (v) { return typeof v === 'string'; }) : []; };
+    var sn = m.seen && typeof m.seen === 'object' ? m.seen : {};
+    m.seen = { relics: list(sn.relics), mods: list(sn.mods), foes: list(sn.foes), mapMods: list(sn.mapMods) };
+    m.ach = m.ach && typeof m.ach === 'object' && !Array.isArray(m.ach) ? m.ach : {};     // { 成就 id: 达成时间 }
+    m.history = Array.isArray(m.history) ? m.history.filter(function (h) { return h && typeof h === 'object'; }).slice(0, Run.HISTORY_MAX) : [];
+    m.wonWith = list(m.wonWith).filter(ok);                                              // 用哪些车通关过
+    m.daily = m.daily && typeof m.daily === 'object' && typeof m.daily.date === 'string' ? m.daily : null;   // 最近一天的每日挑战成绩
+    m.dailyWins = Math.max(0, m.dailyWins | 0);
+    m.endlessBest = Math.max(0, m.endlessBest | 0);                                      // 无尽模式最多额外打穿几个区域
     return m;
   }
   Run._storeSet = storeSet;      // 测试用：直接往存储里塞东西，模拟存档被写坏
@@ -421,7 +485,11 @@
       asc: opts.asc || 0,
       hardcore: !!opts.hardcore,
       battles: 0, bosses: 0, earned: 0,
-      over: false, won: false
+      over: false, won: false,
+      seed: Run.cleanSeed(opts.seed) || Run.randomSeed(),
+      daily: opts.daily || null,   // 每日挑战的日期（'2026-11-15'），不是每日挑战就是 null
+      endless: 0,                  // 通关后进了无尽模式：已经额外打穿了几个区域
+      t0: Date.now()
     };
     state.layers = Run.genLayers(state);
     return state;
@@ -449,6 +517,10 @@
 
   // ================= 路线 =================
   function depthOf(state, step) { return state.act * Run.LAYERS_PER_ACT + step; }
+  /** 当前区域的定义。无尽模式里 act 一直往上涨，三个区域轮着来 */
+  Run.actOf = function (state) { return Run.ACTS[state.act % Run.ACTS.length]; };
+  /** 无尽模式的第几圈（0 = 还在正常的三个区域里） */
+  Run.loopOf = function (state) { return Math.floor(state.act / Run.ACTS.length); };
 
   function enemyDef(state, step, kind) {
     var d = depthOf(state, step), asc = state.asc;
@@ -520,7 +592,7 @@
   }
 
   function fightNode(state, step, kind) {
-    var act = Run.ACTS[state.act], d = depthOf(state, step), i, e;
+    var act = Run.actOf(state), d = depthOf(state, step), i, e;
     var node = { type: kind, mapId: pick(act.maps), enemies: [], gold: kind === 'elite' ? 70 + d * 4 : 32 + d * 3 };
     var roll = kind === 'fight' ? rand() : 1;
     if (d >= 1 && roll < 0.14) {
@@ -569,11 +641,12 @@
   }
 
   function bossNode(state) {
-    var act = Run.ACTS[state.act], b = act.boss, asc = state.asc;
+    var act = Run.actOf(state), b = act.boss, asc = state.asc;
+    var loop = Run.loopOf(state);                     // 无尽模式第几圈：Boss 每圈再壮 30%、再狠 12%
     var node = { type: 'boss', mapId: b.map, enemies: [], gold: 120 + state.act * 40 };
     node.enemies.push({
-      vid: b.vid, name: b.name, boss: true, kit: b.kit, scale: b.scale,
-      hp: Math.round(b.hp * (1 + asc * 0.08)), atk: Math.round(b.atk * (1 + asc * 0.05)),
+      vid: b.vid, name: (loop ? '狂暴·' : '') + b.name, boss: true, kit: b.kit, scale: b.scale,
+      hp: Math.round(b.hp * (1 + asc * 0.08) * (1 + loop * 0.3)), atk: Math.round(b.atk * (1 + asc * 0.05) * (1 + loop * 0.12)),
       mods: { w1: (b.mods.w1 || []).slice(), w2: (b.mods.w2 || []).slice(), ss: (b.mods.ss || []).slice() },
       perks: copy(b.perks)
     });
@@ -590,6 +663,9 @@
    * 每层给两三个选项。打得越多拿得越多，也掉得越多血——这就是每一步要权衡的东西。
    */
   Run.genLayers = function (state) {
+    return seeded(state, 'L' + state.act, function () { return genLayersRaw(state); });
+  };
+  function genLayersRaw(state) {
     var L = [], other = function () { return { type: pick(['shop', 'rest', 'event', 'event', 'chest']) }; };
     L.push([fightNode(state, 0, 'fight'), fightNode(state, 0, 'fight')]);
     L.push([fightNode(state, 1, 'fight'), other(), fightNode(state, 1, 'fight')]);
@@ -601,7 +677,7 @@
       { type: pick(['rest', 'shop', 'altar']) }]);
     L.push([bossNode(state)]);
     return L;
-  };
+  }
 
   Run.choices = function (state) { return state.layers[state.step]; };
 
@@ -739,6 +815,7 @@
   Run.afterBattle = function (state, game) {
     var me = game.units[0], node = state.node;
     if (game.result !== 0 || !me.alive) { Run.finish(state, false); return; }
+    var hpBefore = state.hp;
     var pk = Run.perks(state);
     state.items = me.items.slice(0, RZ.MAX_ITEMS);
     if (me.revived) {                                  // 应急核心是一次性的
@@ -749,6 +826,7 @@
     clampHp(state);
     if (game.trialFailed) {                            // 限回合挑战超时：人没事，但什么也没捞着
       state.battles++;
+      var m0 = Run.loadMeta(); noteSeen(m0, state); Run.saveMeta(m0);
       state.pending = { kind: 'note', title: '时间到', text: '规定的轮数里没能全歼，敌人趁乱撤走了。没有奖励，接着赶路。' };
       return;
     }
@@ -762,12 +840,19 @@
       clampHp(state);
     }
     state.pending = { kind: 'reward', from: node.type, gold: gold, style: game.style.gold, choices: rewardChoices(state, node.type, !!(node.mods && node.mods.length)) };
+    // 图鉴和成就：每打完一场记一次（远征中途关掉网页也不丢）
+    var meta = Run.loadMeta();
+    noteSeen(meta, state);
+    var got = Run.checkAch(meta, state, { game: game, node: node, hpBefore: hpBefore, hpAfter: me.hp });
+    if (got.length) state.pending.ach = got;
+    Run.saveMeta(meta);
   };
 
   function grantRelic(state, id) {
     var r = Run.relicById(id);
     if (!r || state.relics.indexOf(id) >= 0) return;
     state.relics.push(id);
+    (state.everRelics || (state.everRelics = [])).push(id);      // 图鉴用：之后被熔掉 / 换走的也算见过
     if (r.gain) r.gain(state);
     clampHp(state);
   }
@@ -809,34 +894,156 @@
     return true;
   };
 
-  /** 往前走一层；走完一个区域换下一个，走完三个就通关 */
+  /** 往前走一层；走完一个区域换下一个，走完三个就通关。无尽模式里没有尽头，每打穿一个区域记一笔 */
   Run.advance = function (state) {
     state.node = null;
     state.step++;
     if (state.step >= state.layers.length) {
       state.act++;
       state.step = 0;
-      if (state.act >= Run.ACTS.length) { Run.finish(state, true); return; }
+      if (state.endless) state.endless = state.act - Run.ACTS.length + 1;   // 1 = 刚进无尽；2 = 已经额外打穿一个区域……
+      else if (state.act >= Run.ACTS.length) { Run.finish(state, true); return; }
       state.layers = Run.genLayers(state);
     }
   };
 
-  /** 远征结束（赢或输）：结算勋章，写进局外存档 */
+  /** 这局远征的分数：历史记录和每日挑战比的就是它。打得深、打得多、带得多都加分 */
+  Run.score = function (state) {
+    var won = state.won ? 1 : 0;
+    return state.battles * 100 + state.bosses * 500 + won * 1500 + won * state.asc * 300 +
+      state.relics.length * 25 + Math.floor(state.gold / 2);
+  };
+
+  /**
+   * 远征结束（赢或输）：结算勋章、历史、成就，写进局外存档。
+   * 通关后进了无尽模式的那一局会结算两次——通关一次，倒在无尽里又一次：
+   * 第二次只补发多出来的勋章，历史里改的也是同一条，仍然算「通关」。
+   */
   Run.finish = function (state, won) {
     if (state.over) return;
+    if (state.endless) won = true;                    // 无尽里倒下不算失败：已经通关了
     state.over = true; state.won = won; state.pending = null;
     var meta = Run.loadMeta();
-    state.earned = state.battles + state.bosses * 3 + (won ? 10 + state.asc * 2 : 0);
+    var total = state.battles + state.bosses * 3 + (won ? 10 + state.asc * 2 : 0);
+    state.earned = total - (state.paid || 0);
+    state.paid = total;
     meta.medals += state.earned;
-    meta.runs++;
     meta.sinceBackup++;
     meta.best = Math.max(meta.best, state.battles);
-    if (won) {
-      meta.wins++;
-      if (state.asc >= meta.asc && meta.asc < Run.MAX_ASC) meta.asc = state.asc + 1;
+    var first = !state.histId;                        // 这一局第一次结算
+    if (first) {
+      meta.runs++;
+      if (won) {
+        meta.wins++;
+        if (state.asc >= meta.asc && meta.asc < Run.MAX_ASC) meta.asc = state.asc + 1;
+        if (meta.wonWith.indexOf(state.vehicleId) < 0) meta.wonWith.push(state.vehicleId);
+      }
     }
+    var depth = Math.max(0, (state.endless || 0) - 1);            // 无尽里额外打穿了几个区域
+    meta.endlessBest = Math.max(meta.endlessBest, depth);
+    state.score = Run.score(state);
+    // 每日挑战：同一天可以反复打，记最好的一次
+    if (state.daily) {
+      if (!meta.daily || meta.daily.date !== state.daily) meta.daily = { date: state.daily, best: 0, tries: 0, won: false };
+      if (first) meta.daily.tries++;
+      meta.daily.best = Math.max(meta.daily.best, state.score);
+      if (won && !meta.daily.won) { meta.daily.won = true; meta.dailyWins++; }
+    }
+    // 历史
+    state.histId = state.histId || (Date.now() + '-' + ((Math.random() * 1e6) | 0));
+    var rec = {
+      id: state.histId, t: Date.now(), vid: state.vehicleId, won: won, act: state.act, step: state.step, asc: state.asc,
+      battles: state.battles, bosses: state.bosses, relics: state.relics.slice(), seed: state.seed || '', daily: state.daily || null,
+      hardcore: !!state.hardcore, endless: depth, score: state.score
+    };
+    var k = -1;
+    for (var i = 0; i < meta.history.length; i++) if (meta.history[i].id === rec.id) k = i;
+    if (k >= 0) meta.history[k] = rec; else meta.history.unshift(rec);
+    meta.history = meta.history.slice(0, Run.HISTORY_MAX);
+    noteSeen(meta, state);
+    state.endAch = Run.checkAch(meta, state, { end: true });
+    state.earned += state.achMedals || 0;             // 这一局里达成的成就给的勋章（已经发过了，这里只是一起显示）
     Run.saveMeta(meta);
     Run.clear();
+  };
+
+  /** 通关之后接着打：三个区域轮着来，敌人一路变强，直到倒下。只有刚通关的那一局能进 */
+  Run.canEndless = function (state) { return !!state && state.over && state.won && !state.endless; };
+  Run.goEndless = function (state) {
+    if (!Run.canEndless(state)) return false;
+    state.over = false;
+    state.endless = 1;
+    state.endAch = null; state.achMedals = 0;
+    state.act = Run.ACTS.length; state.step = 0; state.node = null; state.pending = null;
+    state.hp = Run.maxHp(state);
+    state.layers = Run.genLayers(state);
+    Run.save(state);
+    return true;
+  };
+
+  // ================= 图鉴 =================
+  /** 把这一局见过的东西并进局外存档：拿到过的遗物、装过的改造、打过的特殊敌人和词条 */
+  function noteSeen(meta, state) {
+    var add = function (arr, id) { if (id && arr.indexOf(id) < 0) arr.push(id); };
+    state.relics.concat(state.everRelics || []).forEach(function (id) { if (Run.relicById(id)) add(meta.seen.relics, id); });
+    ['w1', 'w2', 'ss'].forEach(function (slot) { state.mods[slot].forEach(function (id) { if (Run.modById(id)) add(meta.seen.mods, id); }); });
+    var node = state.node;
+    if (node && node.enemies) {
+      node.enemies.forEach(function (e) { add(meta.seen.foes, e.boss ? 'boss:' + e.kit : e.kind ? 'kind:' + e.kind : null); });
+      (node.mods || []).forEach(function (id) { add(meta.seen.mapMods, id); });
+    }
+  }
+  Run.noteSeen = noteSeen;
+
+  // ================= 成就 =================
+  // test(meta, state, ctx)：ctx.game / ctx.node 只在刚打完一场时有，ctx.end 只在远征结束时为真。
+  // 达成一次就永久记在 meta.ach 里，各给几枚勋章——勋章是解锁战车用的，所以成就也是一条攒车的路。
+  function won(c, s) { return c.end && s.won; }
+  function tag(c, k) { return !!(c.game && c.game.style && c.game.style.tags && c.game.style.tags[k]); }
+  Run.ACHIEVEMENTS = [
+    { id: 'first', name: '初战告捷', desc: '打赢第一场远征战斗。', medals: 1, test: function (m, s, c) { return !!c.game; } },
+    { id: 'ringout', name: '一脚踢出界', desc: '把敌人打下地图。', medals: 1, test: function (m, s, c) { return tag(c, 'ringout'); } },
+    { id: 'barrel', name: '借桶杀人', desc: '用油桶炸死敌人。', medals: 1, test: function (m, s, c) { return tag(c, 'barrel'); } },
+    { id: 'multi', name: '一炮双响', desc: '一发炮弹同时炸到两个敌人。', medals: 1, test: function (m, s, c) { return tag(c, 'multi'); } },
+    { id: 'flawless', name: '毫发无伤', desc: '打赢一场战斗，耐久一点没掉。', medals: 2, test: function (m, s, c) { return !!c.game && c.hpAfter >= c.hpBefore; } },
+    { id: 'quick', name: '速战速决', desc: '两轮之内打赢一场战斗。', medals: 2, test: function (m, s, c) { return !!c.game && c.game.round <= 2; } },
+    { id: 'night', name: '夜猫子', desc: '打赢一场夜战。', medals: 1, test: function (m, s, c) { return !!c.node && (c.node.mods || []).indexOf('night') >= 0; } },
+    { id: 'meteor', name: '流星之下', desc: '打赢一场陨石雨。', medals: 1, test: function (m, s, c) { return !!c.node && (c.node.mods || []).indexOf('meteor') >= 0; } },
+    { id: 'trial', name: '分秒必争', desc: '在限时挑战里按时全歼敌人。', medals: 2, test: function (m, s, c) { return !!c.node && c.node.type === 'trial'; } },
+    { id: 'boss1', name: '碾碎碾压者', desc: '击破第一个区域的 Boss。', medals: 2, test: function (m, s) { return s.bosses >= 1; } },
+    { id: 'boss2', name: '风暴止息', desc: '击破第二个区域的 Boss。', medals: 3, test: function (m, s) { return s.bosses >= 2; } },
+    { id: 'win', name: '远征通关', desc: '打穿三个区域。', medals: 5, test: function (m, s, c) { return won(c, s); } },
+    { id: 'asc3', name: '越战越勇', desc: '在进阶 3 或更高的难度通关。', medals: 5, test: function (m, s, c) { return won(c, s) && s.asc >= 3; } },
+    { id: 'asc5', name: '登峰造极', desc: '在进阶 5 通关。', medals: 8, test: function (m, s, c) { return won(c, s) && s.asc >= 5; } },
+    { id: 'hardcore', name: '盲打高手', desc: '开着硬核规则通关（没有弹道预览和出手顺序）。', medals: 5, test: function (m, s, c) { return won(c, s) && s.hardcore; } },
+    { id: 'garage', name: '车库主人', desc: '用五辆不同的战车通关。', medals: 8, test: function (m) { return m.wonWith.length >= 5; } },
+    { id: 'syn3', name: '环环相扣', desc: '同时凑成三个联动。', medals: 3, test: function (m, s) { return Run.activeSynergies(s).length >= 3; } },
+    { id: 'curse', name: '与魔共舞', desc: '背着两件诅咒遗物击破一个 Boss。', medals: 3,
+      test: function (m, s, c) { return !!c.node && c.node.type === 'boss' && curses(s).length >= 2; } },
+    { id: 'mods5', name: '改到认不出', desc: '给同一把武器装上五个改造。', medals: 2,
+      test: function (m, s) { return Math.max(s.mods.w1.length, s.mods.w2.length, s.mods.ss.length) >= 5; } },
+    { id: 'relic12', name: '收藏家', desc: '一局里同时带着十二件遗物。', medals: 3, test: function (m, s) { return s.relics.length >= 12; } },
+    { id: 'rich', name: '腰缠万贯', desc: '手里攒到 400 金币。', medals: 2, test: function (m, s) { return s.gold >= 400; } },
+    { id: 'daily', name: '今日事今日毕', desc: '通关一次每日挑战。', medals: 5, test: function (m, s, c) { return won(c, s) && !!s.daily; } },
+    { id: 'endless1', name: '意犹未尽', desc: '在无尽模式里再打穿一个区域。', medals: 5, test: function (m, s) { return (s.endless || 0) >= 2; } },
+    { id: 'endless3', name: '永不熄火', desc: '在无尽模式里再打穿三个区域。', medals: 10, test: function (m, s) { return (s.endless || 0) >= 4; } },
+    { id: 'codex', name: '见多识广', desc: '图鉴里的遗物全部见过。', medals: 5, test: function (m) { return m.seen.relics.length >= Run.RELICS.length; } }
+  ];
+  Run.achById = function (id) { return byId(Run.ACHIEVEMENTS, id); };
+  /** 查一遍成就。新达成的记进 meta（勋章当场发），返回它们的 id。调用的人负责 saveMeta */
+  Run.checkAch = function (meta, state, ctx) {
+    var got = [];
+    Run.ACHIEVEMENTS.forEach(function (a) {
+      if (meta.ach[a.id]) return;
+      var ok = false;
+      try { ok = !!a.test(meta, state, ctx || {}); } catch (e) { ok = false; }
+      if (!ok) return;
+      meta.ach[a.id] = Date.now();
+      meta.medals += a.medals;
+      state.achMedals = (state.achMedals || 0) + a.medals;
+      got.push(a.id);
+    });
+    return got;
   };
 
   // ================= 商店 =================
@@ -1214,6 +1421,21 @@
     Run.advance(state);
     return true;
   };
+
+  // 会掷骰子的入口都包进「种子 + 这是哪一步」的随机源里（见文件开头的 seeded()）。
+  // tag 在调用前按当时的 state 算好；同一步里重复掷（刷新货架）要把次数算进 tag。
+  function wrapSeed(name, tagOf) {
+    var fn = Run[name];
+    Run[name] = function (state) {
+      var args = arguments;
+      return seeded(state, tagOf.apply(null, args), function () { return fn.apply(Run, args); });
+    };
+  }
+  wrapSeed('enter', function (s, i) { return 'N' + at(s) + '.' + i; });
+  wrapSeed('afterBattle', function (s) { return 'B' + at(s) + (s.node && s.node.fromEvent ? '.e' : ''); });
+  wrapSeed('reroll', function (s) { return 'S' + at(s) + '.' + (((s.pending && s.pending.rerolls) || 0) + 1); });
+  wrapSeed('eventChoose', function (s, i) { return 'E' + at(s) + '.' + i; });
+  wrapSeed('rest', function (s, id) { return 'R' + at(s) + '.' + id; });
 
   RZ.Run = Run;
 })(window.RZ || (window.RZ = {}));
