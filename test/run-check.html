@@ -10,9 +10,15 @@
 var stage = new URLSearchParams(location.search).get('stage') || 'map';
 document.getElementById('f').onload = function () {
   var w = this.contentWindow, d = w.document, RZ = w.RZ, Run = RZ.Run;
-  try { w.localStorage.removeItem('rz-run'); } catch (e) {}
+  try { w.localStorage.removeItem('rz-run'); w.localStorage.removeItem('rz-daily'); } catch (e) {}
   d.querySelector('[data-go="run"]').click();
   if (stage === 'hub') return;
+  if (stage === 'camp') {                         // 远征打到一半回营地：多一张「进行中的远征」
+    var mid = Run.newRun('honglong'); mid.act = 1; mid.step = 2; mid.relics = ['crit']; mid.gold = 130; Run.save(mid);
+    RZ.RunUI.render();
+    d.querySelector('[data-act="camp"]').click();
+    return;
+  }
   if (stage === 'codex' || stage === 'ach' || stage === 'hist') {     // 营地的三页：先造一份有内容的局外存档
     var mm = Run.loadMeta();
     mm.seen = { relics: ['crit', 'after', 'demo', 'turbo', 'scope', 'dice', 'ultra', 'plate', 'thorns'], mods: ['split', 'heavy', 'chain', 'burn'],

@@ -105,6 +105,97 @@
     }
   };
 
+  // ---- v1.5 新增的五张图。每张的地形都要逼出一种不同的打法，别只是换个颜色的丘陵 ----
+
+  /** 巨木林：矮地面上立着几棵大树，树冠是能站人的平台。打树干，上面的人就掉下来 */
+  GENERATORS.trees = function (mask) {
+    var f = fbm([480, 170, 60], [1, 0.4, 0.15]), x;
+    for (x = 0; x < WORLD_W; x++) fillColumn(mask, x, Math.floor(570 + f(x) * 120), WORLD_H);
+    var n = 7, slot = (WORLD_W - 160) / n;
+    for (var i = 0; i < n; i++) {
+      var cx = Math.floor(80 + slot * (i + 0.5) + rnd(-50, 50));
+      var top = Math.floor(rnd(210, 380)), tw = Math.floor(rnd(26, 40));
+      fillRect(mask, cx - (tw >> 1), top, tw, surfaceY(mask, cx) - top + 6);      // 树干
+      blob(mask, cx, top, rnd(84, 128), rnd(30, 44));                              // 树冠
+      if (Math.random() < 0.4) blob(mask, cx + rnd(-70, 70), top - rnd(90, 130), rnd(50, 76), rnd(22, 30));
+    }
+  };
+
+  /** 废弃都市：一条街，两边高高低低的楼。楼顶对楼顶打，掉进楼缝里就只能挖 */
+  GENERATORS.city = function (mask) {
+    var f = fbm([300, 90], [1, 0.3]), x;
+    for (x = 0; x < WORLD_W; x++) fillColumn(mask, x, Math.floor(650 + f(x) * 26), WORLD_H);
+    x = Math.floor(rnd(20, 70));
+    while (x < WORLD_W - 60) {
+      var w = Math.floor(rnd(96, 190)), top = Math.floor(rnd(250, 580));
+      fillRect(mask, x, top, w, WORLD_H - top);
+      if (Math.random() < 0.5) fillRect(mask, x + Math.floor(w * rnd(0.15, 0.55)), top - 30, Math.floor(rnd(26, 40)), 30);   // 楼顶的水箱 / 电梯间，当掩体
+      x += w + (Math.random() < 0.3 ? 0 : Math.floor(rnd(64, 120)));            // 要么紧挨着，要么留一条够宽的街
+    }
+  };
+
+  /** 冰封裂谷：一整片高台，被几条又窄又深的冰缝劈开。掉进去不会死，但很难打出来 */
+  GENERATORS.glacier = function (mask) {
+    var f = fbm([520, 180, 64], [1, 0.4, 0.15]);
+    var n = 4, cracks = [], i;
+    for (i = 0; i < n; i++) cracks.push({ c: (WORLD_W / n) * (i + 0.5) + rnd(-120, 120), w: rnd(34, 58), d: rnd(250, 340) });
+    for (var x = 0; x < WORLD_W; x++) {
+      var h = 330 + f(x) * 110;
+      for (i = 0; i < n; i++) {
+        var d = Math.abs(x - cracks[i].c) / cracks[i].w;
+        if (d < 1) h += (1 - Math.pow(d, 4)) * cracks[i].d;               // 四次方：缝壁近乎垂直
+      }
+      fillColumn(mask, x, Math.floor(Math.min(h, WORLD_H - 50)), WORLD_H);
+    }
+  };
+
+  /** 断桥天堑：两头是悬崖，中间一道深渊，只有一座桥。把桥炸断，桥上的人就下去了 */
+  GENERATORS.bridge = function (mask) {
+    var f = fbm([260, 90], [1, 0.35]), x;
+    var L = Math.floor(rnd(400, 470)), R = WORLD_W - Math.floor(rnd(400, 470));
+    for (x = 0; x < WORLD_W; x++) {
+      if (x < L || x > R) fillColumn(mask, x, Math.floor(350 + f(x) * 90), WORLD_H);
+    }
+    var deckY = 392;
+    for (x = L - 30; x <= R + 30; x++) {                                  // 桥面：中间略微下垂
+      var sag = Math.sin((x - L) / (R - L) * Math.PI) * 26;
+      fillColumn(mask, x, Math.floor(deckY + sag), Math.floor(deckY + sag) + 54);   // 够厚：要好几炮才炸得穿（薄了的话一场八回合就有人掉下去）
+    }
+    var piers = 4;
+    for (var i = 1; i <= piers; i++) {                                     // 桥墩：一直插到看不见的地方
+      var px = Math.floor(L + (R - L) * i / (piers + 1));
+      fillRect(mask, px - 22, deckY + 10, 44, WORLD_H - deckY);
+      fillRect(mask, px - 46, deckY + 30, 92, 44);                        // 墩顶加宽：桥面断了，墩子上还能站人
+    }
+    for (i = 0; i < 3; i++) blob(mask, rnd(L + 120, R - 120), rnd(600, 700), rnd(110, 170), 30);   // 深渊里三块石台，给掉下去的人一线生机
+  };
+
+  /** 风蚀石林：一根根平顶石柱和两座石拱。柱顶视野好但站不稳，拱底下炮弹够不着 */
+  GENERATORS.spires = function (mask) {
+    var f = fbm([440, 150, 56], [1, 0.4, 0.15]), x, y, i;
+    for (x = 0; x < WORLD_W; x++) fillColumn(mask, x, Math.floor(600 + f(x) * 90), WORLD_H);
+    for (i = 0; i < 2; i++) {                                              // 石拱：一个大椭圆挖掉里面的小椭圆
+      var ax = Math.floor(WORLD_W * (i ? 0.7 : 0.3) + rnd(-110, 110)), ay = surfaceY(mask, ax) + 10;
+      var orx = rnd(150, 190), ory = rnd(190, 250), irx = orx - rnd(44, 56), iry = ory - rnd(46, 60);
+      for (y = Math.max(0, Math.floor(ay - ory)); y < Math.min(WORLD_H, ay); y++) {
+        for (x = Math.max(0, Math.floor(ax - orx)); x < Math.min(WORLD_W, ax + orx); x++) {
+          var ox = (x - ax) / orx, oy = (y - ay) / ory, ix = (x - ax) / irx, iy = (y - ay) / iry;
+          if (ox * ox + oy * oy <= 1) mask[y * WORLD_W + x] = ix * ix + iy * iy <= 1 ? 0 : 1;
+        }
+      }
+    }
+    var n = 9, slot = (WORLD_W - 120) / n;
+    for (i = 0; i < n; i++) {                                              // 石柱：上窄下宽的梯形，顶是平的
+      var cx = Math.floor(60 + slot * (i + 0.5) + rnd(-44, 44));
+      var top = Math.floor(rnd(250, 470)), tw = rnd(24, 34), bw = rnd(40, 62), bot = surfaceY(mask, cx) + 8;
+      if (bot <= top + 40) continue;                                       // 正好落在石拱顶上就不立了
+      for (y = top; y < bot; y++) {
+        var hw = tw + (bw - tw) * (y - top) / (bot - top);
+        for (x = Math.max(0, Math.floor(cx - hw)); x < Math.min(WORLD_W, cx + hw); x++) mask[y * WORLD_W + x] = 1;
+      }
+    }
+  };
+
   function fillColumn(mask, x, y0, y1) {
     if (y0 < 0) y0 = 0;
     for (var y = y0; y < y1; y++) mask[y * WORLD_W + x] = 1;

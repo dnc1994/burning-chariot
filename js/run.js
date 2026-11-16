@@ -268,17 +268,17 @@
   // Boss 都带磁力底盘（anchor）：不然在浮岛图上一炮掀下去就没了，太便宜。
   Run.ACTS = [
     {
-      name: '锈蚀前线', maps: ['dry', 'canyon'],
+      name: '锈蚀前线', maps: ['dry', 'canyon', 'forest', 'city'],
       boss: { vid: 'aodin', name: '碾压者', kit: 'crusher', hp: 1080, atk: 82, scale: 1.5, map: 'canyon',
               mods: { w1: ['cluster'], w2: ['blast'] }, perks: { anchor: 1, armor: 0.1 }, escorts: 0 }
     },
     {
-      name: '风暴航道', maps: ['sky', 'sea'],
+      name: '风暴航道', maps: ['sky', 'sea', 'ice', 'bridge'],
       boss: { vid: 'xuanfeng', name: '风暴女王', kit: 'queen', hp: 1150, atk: 84, scale: 1.45, map: 'sky',
               mods: { w1: ['apex', 'thunder'], w2: ['split'] }, perks: { anchor: 1 }, escorts: 1 }
     },
     {
-      name: '星环终点', maps: ['star', 'canyon', 'sea'],
+      name: '星环终点', maps: ['star', 'canyon', 'sea', 'spires', 'city'],
       boss: { vid: 'honglong', name: '终焉战车', kit: 'doom', hp: 1350, atk: 76, scale: 1.7, map: 'star',
               mods: { w1: ['burn', 'cluster'], w2: ['apex'] },
               perks: { anchor: 1, armor: 0.1 }, escorts: 2 }
@@ -355,19 +355,39 @@
     return true;
   };
 
-  Run.save = function (state) { storeSet('rz-run', JSON.stringify(state)); };
+  // 两个存档位：普通远征一个（rz-run），每日挑战一个（rz-daily）。
+  // 只有一个位置的时候，打到一半的远征会把每日挑战挡在外面——想打今天的就得先放弃手里这局。
+  function slotOf(state) { return state && state.daily ? 'rz-daily' : 'rz-run'; }
+  Run.save = function (state) { storeSet(slotOf(state), JSON.stringify(state)); };
   /** 一份远征存档看起来是不是完整的（导入别处来的进度时用） */
   function validRun(r) {
     return !!r && r.v === 1 && !r.over && !!RZ.vehicleById(r.vehicleId) && RZ.vehicleById(r.vehicleId).id === r.vehicleId &&
       Array.isArray(r.layers) && r.layers.length > 0 && Array.isArray(r.relics) && !!r.mods && typeof r.hp === 'number';
   }
-  Run.load = function () {
+  function readRun(key) {
     try {
-      var s = JSON.parse(storeGet('rz-run') || 'null');
+      var s = JSON.parse(storeGet(key) || 'null');
       return s && s.v === 1 && !s.over ? s : null;
     } catch (e) { return null; }
+  }
+  /** 打到一半的普通远征 */
+  Run.load = function () {
+    var s = readRun('rz-run');
+    if (s && s.daily) {            // v1.5 刚出时每日挑战也存在这个位置：挪到它自己的位置去
+      storeDel('rz-run');
+      if (s.daily === Run.dateKey()) storeSet('rz-daily', JSON.stringify(s));
+      return null;
+    }
+    return s;
   };
-  Run.clear = function () { storeDel('rz-run'); };
+  /** 打到一半的每日挑战。只认今天的——昨天那局过了零点就作废 */
+  Run.loadDaily = function () {
+    var s = readRun('rz-daily');
+    if (s && s.daily !== Run.dateKey()) { storeDel('rz-daily'); return null; }
+    return s;
+  };
+  /** 清掉存档。传 state 就清它所在的那个位置；不传清普通远征的 */
+  Run.clear = function (state) { storeDel(slotOf(state)); };
 
   // ================= 进度码：不做账号，也能把进度带走 =================
   // 进度只存在这台设备的浏览器里：清数据、换设备、Safari 七天不来都会丢。
@@ -977,7 +997,7 @@
     state.endAch = Run.checkAch(meta, state, { end: true });
     state.earned += state.achMedals || 0;             // 这一局里达成的成就给的勋章（已经发过了，这里只是一起显示）
     Run.saveMeta(meta);
-    Run.clear();
+    Run.clear(state);
   };
 
   /** 通关之后接着打：三个区域轮着来，敌人一路变强，直到倒下。只有刚通关的那一局能进 */

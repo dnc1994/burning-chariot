@@ -1509,6 +1509,58 @@ module.exports = function runModeTests(RZ, check, head) {
     check(g.units.length >= 2 && g.units[1].maxHp > 0, '无尽里的战斗照常开得起来');
   }
 
+  head('v1.5：两个存档位');
+  {
+    freshMeta(); Run.clear(); Run._storeSet('rz-daily', 'null');
+    const main = Run.newRun('liehuo', { seed: 'MAIN01' }); main.step = 2; Run.save(main);
+    const today = Run.dateKey();
+    const d = Run.newDaily(today); d.step = 1; Run.save(d);
+    check(Run.load().seed === 'MAIN01' && Run.loadDaily().daily === today && Run.loadDaily().step === 1, '普通远征和每日挑战各存各的，互不覆盖');
+    Run.finish(d, false);
+    check(Run.loadDaily() === null && Run.load() && Run.load().step === 2, '每日挑战打完只清它自己，手里那局远征还在');
+    const d2 = Run.newDaily(today); Run.save(d2);
+    Run.finish(main, false);
+    check(Run.load() === null && Run.loadDaily() !== null, '反过来也一样');
+    // 过了零点，昨天那局作废
+    const old = Run.newDaily('2020-01-01'); Run.save(old);
+    check(Run.loadDaily() === null, '昨天没打完的每日挑战，今天不再接着打');
+    check(Run.loadDaily() === null && Run.load() === null, '作废的那份也清掉了');
+    // v1.5 早先把每日挑战也存在普通远征的位置上
+    const legacy = Run.newDaily(today); legacy.step = 3;
+    Run._storeSet('rz-run', JSON.stringify(legacy));
+    check(Run.load() === null && Run.loadDaily() && Run.loadDaily().step === 3, '老位置上的每日挑战会挪到它自己的位置');
+    Run.clear(legacy);
+    // 无尽模式续在原来的位置上
+    const w = Run.newDaily(today); w.act = 2; w.step = 4; Run.advance(w); Run.goEndless(w);
+    check(Run.loadDaily() && Run.loadDaily().endless === 1 && Run.load() === null, '每日挑战通关后进无尽，还存在每日的位置上');
+    Run.clear(w);
+  }
+
+  head('v1.5：新地图');
+  {
+    check(RZ.MAPS.length === 10 && new Set(RZ.MAPS.map((m) => m.id)).size === 10, '一共十张图，id 不重复', RZ.MAPS.map((m) => m.name).join(' '));
+    check(RZ.MAPS.every((m) => RZ.POSTER[m.id]), '每张图都有自己的背景海报');
+    check(Run.ACTS.every((a) => a.maps.every((id) => RZ.mapById(id).id === id) && RZ.mapById(a.boss.map).id === a.boss.map), '远征各区域用到的图都存在');
+    const used = new Set(); Run.ACTS.forEach((a) => a.maps.forEach((id) => used.add(id)));
+    check(['forest', 'city', 'ice', 'bridge', 'spires'].every((id) => used.has(id)), '五张新图都排进了远征');
+    for (const id of ['forest', 'city', 'ice', 'bridge', 'spires']) {
+      let bad = 0, solidMin = 1e9, solidMax = 0;
+      for (let k = 0; k < 6; k++) {
+        const g = new RZ.Game({ mapId: id, arcade: true, barrels: 3, humanTeam: 0, roster: [
+          { vehicle: V('liehuo'), team: 0, ai: false, name: 'a' }, { vehicle: V('honglong'), team: 1, ai: true, name: 'b' },
+          { vehicle: V('tuoer'), team: 1, ai: true, name: 'c' }, { vehicle: V('aodin'), team: 1, ai: true, name: 'd' }] });
+        let n = 0; for (let i = 0; i < g.terrain.mask.length; i++) n += g.terrain.mask[i];
+        solidMin = Math.min(solidMin, n); solidMax = Math.max(solidMax, n);
+        for (let i = 0; i < 90; i++) g.update(16);                       // 落稳
+        g.units.forEach((u) => { if (!u.alive || u.y > RZ.WORLD_H - 20) bad++; });
+        const xs = g.units.map((u) => u.x).sort((a, b) => a - b);
+        for (let i = 1; i < xs.length; i++) if (xs[i] - xs[i - 1] < 60) bad++;
+      }
+      const frac = (n) => Math.round(n / (RZ.WORLD_W * RZ.WORLD_H) * 100);
+      check(bad === 0 && frac(solidMin) >= 12 && frac(solidMax) <= 75, `「${RZ.mapById(id).name}」：四辆车都能落在地上、不挤在一起，地形不空也不满`, `实心 ${frac(solidMin)}%~${frac(solidMax)}%`);
+    }
+  }
+
   head('远征：电脑代打跑完整局');
   {
     Run.saveMeta({ medals: 0, unlocked: Run.STARTERS.slice(), asc: 0, wins: 0, runs: 0, best: 0 });

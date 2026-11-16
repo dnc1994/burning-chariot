@@ -57,6 +57,9 @@
   `star()` 画漫画爆炸星，`inkText()` 画描边字。新造型照 `ART.tank` 的写法来。
 - **弹坑余烬是画面的签名**：`Terrain.carve()` 在坑边涂一圈亮黄，`flush()` 里按帧降温成红 → 暗红 → 焦黑。
   降温只在真正绘制时跑（无头测试不走 `flush`），别把它挪进规则循环。
+- **加地图**要动四处：`data.js` 的 `RZ.MAPS`、`terrain.js` 的 `GENERATORS[gen]`、`render.js` 的 `POSTER[id]`（外加一种剪影 `kind`）、
+  `run.js` 里 `Run.ACTS[].maps`。新地形要逼出一种不同的打法，别只是换色的丘陵。做完跑 `test/run.js`（完整对局、射程、
+  「新地图」一节查出生点），再看一眼对局长度别离谱——断桥第一版桥太薄，中位 8 回合就有人掉下去。
 - 背景是开局画一次存进离屏画布的（`Background.render()`），每帧只有一次 `drawImage`。
   往背景里加会动的东西要单独在 `draw()` 里画，别让整张底图每帧重画。
 
@@ -159,6 +162,11 @@
 
 ### 存档与进度码（`js/run.js`）
 
+- **两个存档位**：普通远征 `rz-run`，每日挑战 `rz-daily`（`slotOf(state)` 按 `state.daily` 分）。`Run.save(state)` /
+  `Run.clear(state)` 自己认位置；`Run.load()` 只读普通远征，`Run.loadDaily()` 只读今天的每日（隔天作废）。
+  界面上 `atHub` 表示玩家自己点了「回营地」——有存档也不自动跳回那一局，营地里显示「进行中的远征」卡片。
+  进度码目前只带普通远征那一局，不带每日挑战。
+
 - 局外存档 `rz-meta` 每次写入前把上一份挪到 `rz-meta-bak`；主档读不出来就退回备份。
   读出来一律过 `normalizeMeta()`——补齐缺的字段、扔掉不存在的战车、夹住离谱的数。
   **改存档格式时在 `normalizeMeta` 里按 `m.v` 做迁移**，别让老玩家的存档读不出来。
@@ -204,12 +212,12 @@ node test/balance-sim.js   # 远征平衡模拟：电脑代打 N 局，看能走
 
 | 节 | 覆盖 |
 | --- | --- |
-| 完整对局 | 五张地图 × 十辆战车全跑一遍，必须分出胜负且不抛异常 |
+| 完整对局 | 十张地图 × 十辆战车全跑一遍，必须分出胜负且不抛异常 |
 | 平地试射 | 30 套武器逐个在平地上打中目标 |
 | 必杀直击 | 落雷 / 覆盖打击 / 持续伤害等特殊分支都要结算 |
 | 玩家操作 | 移动、角度上下限、蓄力时长、发射、必杀解锁 |
 | 燃料经济 | 开局油量、扣油、延迟换算、回油奖惩与量级、攒必杀要几回合、各车收支不能失衡 |
-| 射程包络 | 150 套「武器 × 地图」的 45° 满力度射程必须落在 1550~2250px |
+| 射程包络 | 300 套「武器 × 地图」的 45° 满力度射程必须落在 1550~2250px |
 | 风力 | 单回合变化上限、越极端回拉越快、仍然刮得起大风 |
 | 道具 | 九种效果逐个验、结束回合的时机、buff 叠加、三回合真的是三回合、隐身对电脑生效 |
 | 轮次 | 每轮每人恰好一次、最多连着两手、阵亡后照常轮转 |
@@ -223,7 +231,7 @@ node test/balance-sim.js   # 远征平衡模拟：电脑代打 N 局，看能走
 test/render-check.html?map=sky&n=4&frames=900
 test/ui-check.html?stage=title|setup|codex|battle|fire|aimline|pause|enemy|items|itemarmed|ultimate|result
 test/perf-check.html?n=200
-test/run-check.html?stage=hub|codex|ach|hist|backup|import|map|world|boss|reward|shop|rest|event|altar|over|won|battle|charge|bossfight|field|night|flow
+test/run-check.html?stage=hub|camp|codex|ach|hist|backup|import|map|world|boss|reward|shop|rest|event|altar|over|won|battle|charge|bossfight|field|night|flow
 test/sfx-check.html        # 音效试听 + 离线量峰值；headless 下 --dump-dom 看 #report
 test/weapon-check.html?f=6 # 所有武器的弹体与落地效果总览
 ```
@@ -426,6 +434,7 @@ CH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
   v1.2 收尾时单独模拟三个 Boss（王牌代打、随机流派、85% 耐久进场，各 24 场）：
   碾压者约 90%，风暴女王约 40%，终焉战车约 20%。后两个偏难，但代打不会集火护卫、
   也不会挑流派，真人应该好不少——等试玩反馈再动，别继续对着模拟调。
+- **进度码不带每日挑战那一局**（只带普通远征）。
 - **进度码不压缩**：带一局进行中的远征时约 2.7KB；v1.5 起局外存档里多了历史（最多 20 局）和图鉴，
   打久了会再长 3~4KB，放进网址偏长——真嫌长就压缩，或者导出时不带历史。
 - **道具会拉长比赛**：双方都带道具时，深海遗迹的对局均长从 25 回合涨到 35，

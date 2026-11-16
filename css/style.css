@@ -525,6 +525,8 @@ body.touch-mode .hud-bottom-left { bottom: 82px; }
 .daily b { font-family: var(--display); font-weight: 400; font-size: 21px; }
 .daily small { display: block; font-size: 12.5px; line-height: 1.55; color: var(--ink); margin-top: 2px; }
 .daily .daily-rec { font-weight: 600; }
+.daily.resume { background: var(--paper); }
+.daily.resume u { background: var(--teal); color: var(--paper); }
 .seed-in { width: 100%; font-family: var(--display); font-size: 22px; letter-spacing: 3px; text-transform: uppercase; padding: 7px 10px; color: var(--ink);
   background: var(--paper); border: 3px solid var(--ink); border-radius: 0; outline: none; }
 .seed-in:focus { background: #fff8e4; box-shadow: 3px 3px 0 var(--ink); }
