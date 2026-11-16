@@ -24,6 +24,12 @@
 2. `CHANGELOG.md` 最上面加一节，写给玩家看：这一版多了什么、改了什么；
 3. 合进 `main` 之后打一个同名 tag：`git tag v1.1.0 && git push origin v1.1.0`。
 
+**每推一个分支，都要把预览链接发给项目主人**（他明确要求过，别让他自己拼）。Cloudflare 会给每个分支部署一份预览，
+地址是 `https://<分支名，点和斜杠换成横线>-burning-chariot.linghao-zhang.workers.dev/`，
+例如分支 `v1.5-again` → `https://v1-5-again-burning-chariot.linghao-zhang.workers.dev/`。
+构建结果用 `gh api repos/dnc1994/burning-chariot/commits/<sha>/check-runs` 看；正式站是 `https://burning-chariot.linghao.io/`。
+预览和正式站的存档不互通（域名不同）。
+
 怎么算「大更新」：新玩法 / 新模式 / 新内容批次 / 规则或数值的成规模调整 → 升中间那位
 （1.0.0 → 1.1.0）；推倒重来级别的改动才升第一位。只修 bug、改文案、调一两个数值可以只升
 末位，或者攒到下一次大更新里一起记。`test/run-mode.js` 有一条守卫：`RZ.VERSION` 必须在
