@@ -511,10 +511,12 @@
     return [pick(pool)];
   }
 
+  // 带词条的仗更难打，得值得选：多 25 金币，战后奖励还多一个稀有选项（见 rewardChoices）
+  Run.MOD_GOLD = 25;
   function setMods(node, mods) {
-    if (node.mods && node.mods.length) node.gold -= 10;
+    if (node.mods && node.mods.length) node.gold -= Run.MOD_GOLD;
     node.mods = mods;
-    if (mods.length) node.gold += 10;
+    if (mods.length) node.gold += Run.MOD_GOLD;
   }
 
   function fightNode(state, step, kind) {
@@ -548,7 +550,7 @@
     } else {
       node.enemies.push(enemyDef(state, step, kind));
     }
-    // 地图词条：整局的头一场不出，之后普通战斗四成、精英六成。带词条的多给 10 金币
+    // 地图词条：整局的头一场不出，之后普通战斗四成、精英六成
     if (d >= 1) setMods(node, rollMods(node.mapId, kind === 'elite' ? 0.6 : 0.4));
     return node;
   }
@@ -703,7 +705,7 @@
   }
   Run.relicPool = relicPool;
 
-  function rewardChoices(state, kind) {
+  function rewardChoices(state, kind, extraRare) {
     var out = [];
     var taken = function () { return out.map(function (c) { return c.id; }); };
     var relic = function (rarity) {
@@ -725,6 +727,8 @@
     }
     // 事件「拾荒小孩」给的好运：下一次奖励多一个选项
     if (state.luck > 0) { state.luck--; out.push(rand() < 0.5 ? relic('rare') : mod(true)); }
+    // 带词条的仗：再多一个稀有选项（稀有遗物或稀有改造）
+    if (extraRare) out.push(rand() < 0.5 ? relic('rare') : mod(true));
     return out;
   }
 
@@ -757,7 +761,7 @@
       state.hp = Run.maxHp(state);                    // 打完 Boss 彻底大修
       clampHp(state);
     }
-    state.pending = { kind: 'reward', from: node.type, gold: gold, style: game.style.gold, choices: rewardChoices(state, node.type) };
+    state.pending = { kind: 'reward', from: node.type, gold: gold, style: game.style.gold, choices: rewardChoices(state, node.type, !!(node.mods && node.mods.length)) };
   };
 
   function grantRelic(state, id) {

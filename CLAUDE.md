@@ -110,6 +110,7 @@
 
 - **地图词条** `RZ.MAP_MODS`（`field.js`）：节点上是 `node.mods = ['night']`，经 `battleOpts` 变成 `opts.mods`。
   `Game` 只在爽快规则下认它；大风 / 低重力改的是 `Object.create(map)` 出来的副本，**`RZ.MAPS` 原件不许动**。
+  带词条的节点金币 +`Run.MOD_GOLD`、战后奖励多一个稀有选项（`rewardChoices` 的 `extraRare`）——只多 10 金币时没人选。
   `rollMods()` 负责「这张图上不该出哪条」（本来就低重力的不叠低重力）。整局的第一层和 Boss 战不带词条；
   每个区域的第二层保证至少有一场带词条（`genLayers` 里补的）——曾经运气差时一整个区域见不到新内容。
 - **夜战**是把隐身那套推广了：`hiddenFrom(team, u)` = 隐身，或者 `game.dark && !litFor(team, u)`。

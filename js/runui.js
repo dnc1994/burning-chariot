@@ -235,7 +235,8 @@
     if (node.enemies) {
       body = foesHTML(node) + modsHTML(node);
       foot = mapName(node.mapId) + ' · 金币 ' + node.gold + '+ · ' +
-        (node.type === 'boss' ? 'Boss 遗物 + 大修' : node.type === 'elite' || node.type === 'trial' ? '稀有遗物二选一 + 稀有改造' : '改造 / 遗物三选一');
+        (node.type === 'boss' ? 'Boss 遗物 + 大修' : node.type === 'elite' || node.type === 'trial' ? '稀有遗物二选一 + 稀有改造' : '改造 / 遗物三选一') +
+        (node.mods && node.mods.length ? '<b class="mod-bonus">词条奖励：多 ' + Run.MOD_GOLD + ' 金币（已算在内），战后多一个稀有选项</b>' : '');
     } else if (node.type === 'chest') {
       body = '<p>一只没人看着的箱子。白拿一笔金币，再从两样东西里挑一样。</p>';
       foot = '不用打';
@@ -307,8 +308,8 @@
     if (p.kind === 'reward') {
       for (i = 0; i < p.choices.length; i++) h += offerCard(p.choices[i], i, 'reward');
       return '<div class="run-main"><h3 class="run-title">' + (p.from === 'boss' ? 'Boss 击破！' : p.from === 'chest' ? '宝箱' : p.from === 'trial' ? '挑战成功' : '战斗胜利') +
-        '<small>金币 +' + p.gold + (p.style ? '（含花式赏金 ' + p.style + '）' : '') + ' · 三选一</small></h3>' +
-        '<div class="offers">' + h + '</div>' +
+        '<small>金币 +' + p.gold + (p.style ? '（含花式赏金 ' + p.style + '）' : '') + ' · ' + ['', '', '二', '三', '四', '五'][p.choices.length] + '选一</small></h3>' +
+        '<div class="offers' + (p.choices.length > 3 ? ' four' : '') + '">' + h + '</div>' +
         '<button class="btn btn-ghost run-skip" data-act="skip">都不要（换 15 金币）</button></div>';
     }
     if (p.kind === 'shop') {

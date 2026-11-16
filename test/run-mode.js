@@ -1293,10 +1293,20 @@ module.exports = function runModeTests(RZ, check, head) {
     for (let i = 0; i < 200; i++) {
       const t = Run.newRun('liehuo');
       if (t.layers[1].some((n) => n.mods && n.mods.length)) second++;
-      t.layers.forEach((L) => L.forEach((n) => { if (n.type === 'fight' && n.enemies.length === 1 && !n.enemies[0].kind && n.gold !== 32 + (L === t.layers[0] ? 0 : t.layers.indexOf(L)) * 3 + (n.mods && n.mods.length ? 10 : 0)) goldOk = false; }));
+      t.layers.forEach((L) => L.forEach((n) => { if (n.type === 'fight' && n.enemies.length === 1 && !n.enemies[0].kind && n.gold !== 32 + (L === t.layers[0] ? 0 : t.layers.indexOf(L)) * 3 + (n.mods && n.mods.length ? Run.MOD_GOLD : 0)) goldOk = false; }));
     }
     check(second === 200, '每个区域的第二层一定有一场带词条的仗', `${second} / 200`);
-    check(goldOk, '补上去的词条照样多给 10 金币，不多不少');
+    check(goldOk && Run.MOD_GOLD >= 20, '带词条的仗多给一笔金币，补上去的词条也一样，不多不少', `+${Run.MOD_GOLD}`);
+    {
+      const done = { units: [{ alive: true, items: [], hp: 500 }], result: 0, style: { gold: 0 } };
+      const a = Run.newRun('liehuo'); a.node = { type: 'fight', gold: 10, mods: ['night'] }; Run.afterBattle(a, done);
+      const b = Run.newRun('liehuo'); b.node = { type: 'fight', gold: 10, mods: [] }; Run.afterBattle(b, done);
+      const e = Run.newRun('liehuo'); e.node = { type: 'elite', gold: 10, mods: ['gale'] }; Run.afterBattle(e, done);
+      const rare = (c) => c && (c.type === 'relic' ? Run.relicById(c.id).rarity === 'rare' : Run.modById(c.id).rare);
+      check(a.pending.choices.length === 4 && b.pending.choices.length === 3 && e.pending.choices.length === 4 && rare(a.pending.choices[3]) && rare(e.pending.choices[3]),
+        '带词条的仗打赢：战后多一个稀有选项（普通战斗和精英战都是）');
+      check(new Set(a.pending.choices.map((c) => c.id)).size === 4, '多出来的选项不和前三个重复');
+    }
     // 低重力的图不叠低重力
     let bad = 0;
     for (let i = 0; i < 300; i++) {

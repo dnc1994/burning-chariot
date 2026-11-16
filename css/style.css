@@ -613,6 +613,7 @@ body.touch-mode .hud-bottom-left { bottom: 82px; }
   border: 2px solid var(--ink); padding: 0 6px 1px; margin-right: 7px; white-space: nowrap; }
 .node-mod.hot b { background: var(--red); color: var(--paper); }
 .foe-note { padding-left: 8px; border-left: 3px solid var(--ink-dim); }
+.node-foot .mod-bonus { display: block; margin-top: 5px; color: var(--red-deep); font-weight: 600; }
 .node-body { flex: 1; display: grid; gap: 10px; align-content: start; padding: 14px; }
 .node-body p { font-size: 14px; color: var(--ink-soft); line-height: 1.7; }
 .node-foot { margin: 0 14px; padding: 9px 0 12px; border-top: 2.5px solid var(--ink); font-size: 12.5px; color: var(--ink-soft); }
