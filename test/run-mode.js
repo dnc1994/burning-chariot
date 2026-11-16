@@ -1289,6 +1289,14 @@ module.exports = function runModeTests(RZ, check, head) {
       if (t.layers[4][0].mods && t.layers[4][0].mods.length) bossMods++;
     }
     check(early === 0 && bossMods === 0, '开局第一层没有词条和特殊敌人；Boss 战不带词条');
+    let second = 0, goldOk = true;
+    for (let i = 0; i < 200; i++) {
+      const t = Run.newRun('liehuo');
+      if (t.layers[1].some((n) => n.mods && n.mods.length)) second++;
+      t.layers.forEach((L) => L.forEach((n) => { if (n.type === 'fight' && n.enemies.length === 1 && !n.enemies[0].kind && n.gold !== 32 + (L === t.layers[0] ? 0 : t.layers.indexOf(L)) * 3 + (n.mods && n.mods.length ? 10 : 0)) goldOk = false; }));
+    }
+    check(second === 200, '每个区域的第二层一定有一场带词条的仗', `${second} / 200`);
+    check(goldOk, '补上去的词条照样多给 10 金币，不多不少');
     // 低重力的图不叠低重力
     let bad = 0;
     for (let i = 0; i < 300; i++) {

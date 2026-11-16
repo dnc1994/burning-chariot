@@ -511,15 +511,21 @@
     return [pick(pool)];
   }
 
+  function setMods(node, mods) {
+    if (node.mods && node.mods.length) node.gold -= 10;
+    node.mods = mods;
+    if (mods.length) node.gold += 10;
+  }
+
   function fightNode(state, step, kind) {
     var act = Run.ACTS[state.act], d = depthOf(state, step), i, e;
     var node = { type: kind, mapId: pick(act.maps), enemies: [], gold: kind === 'elite' ? 70 + d * 4 : 32 + d * 3 };
     var roll = kind === 'fight' ? rand() : 1;
-    if (d >= 2 && roll < 0.14) {
+    if (d >= 1 && roll < 0.14) {
       // 一群小车：三辆，最后一个区域四辆
       for (i = 0; i < (state.act >= 2 ? 4 : 3); i++) node.enemies.push(swarmDef(state, step));
       node.gold += 12;
-    } else if (d >= 2 && roll < 0.28) {
+    } else if (d >= 1 && roll < 0.28) {
       // 炮台 + 一辆护着它的小车
       node.enemies.push(turretDef(state, step));
       e = enemyDef(state, step, 'fight'); e.hpMul *= 0.4; e.atkMul *= 0.75;
@@ -542,11 +548,8 @@
     } else {
       node.enemies.push(enemyDef(state, step, kind));
     }
-    // 地图词条：开场两层不出，之后普通战斗三成、精英一半。带词条的多给 10 金币
-    if (d >= 1) {
-      node.mods = rollMods(node.mapId, kind === 'elite' ? 0.5 : 0.3);
-      if (node.mods.length) node.gold += 10;
-    }
+    // 地图词条：整局的头一场不出，之后普通战斗四成、精英六成。带词条的多给 10 金币
+    if (d >= 1) setMods(node, rollMods(node.mapId, kind === 'elite' ? 0.6 : 0.4));
     return node;
   }
 
@@ -588,6 +591,8 @@
     var L = [], other = function () { return { type: pick(['shop', 'rest', 'event', 'event', 'chest']) }; };
     L.push([fightNode(state, 0, 'fight'), fightNode(state, 0, 'fight')]);
     L.push([fightNode(state, 1, 'fight'), other(), fightNode(state, 1, 'fight')]);
+    // 每个区域的第二层保证有一场带词条的仗摆在面前——不然运气差的时候一整个区域都见不到新东西
+    if (!L[1][0].mods.length && !L[1][2].mods.length) setMods(L[1][0], rollMods(L[1][0].mapId, 1));
     L.push([fightNode(state, 2, 'elite'), { type: 'shop' }, { type: 'rest' }]);
     // Boss 前一层：普通战斗有四成换成限回合挑战；不想打的那一格偶尔是诅咒祭坛
     L.push([rand() < 0.4 ? trialNode(state, 3) : fightNode(state, 3, 'fight'), fightNode(state, 3, 'elite'),
