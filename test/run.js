@@ -382,7 +382,7 @@ head('45° 满力度射程 ≈ 一张地图宽');
     if (got.r > worst.r) worst = { r: got.r, s: `${m.name} ${v.name} ${v[k].name}` };
     if (got.r < closest.r) closest = { r: got.r, s: `${m.name} ${v.name} ${v[k].name}` };
   }
-  check(bad === 0, `150 套武器×地图组合都落在 ${LO}~${HI}px`,
+  check(bad === 0, `${RZ.MAPS.length * 30} 套武器×地图组合都落在 ${LO}~${HI}px`,
     `最远 ${worst.r}px ${worst.s} / 最近 ${closest.r}px ${closest.s}`);
 
   // 低重力地图靠降初速保持射程，只让弹道变飘

@@ -16,7 +16,7 @@
   'use strict';
 
   // 版本号：每次大更新都要改这里，并在 CHANGELOG.md 里记一条、打一个同名 git tag
-  RZ.VERSION = '1.4.0';
+  RZ.VERSION = '1.5.0';
 
   RZ.MAX_FUEL = 200;          // 燃料上限，全场统一
   RZ.START_FUEL = 22;         // 开局油量：勉强够打一发一号或二号武器 + 挪两步
@@ -245,6 +245,37 @@
       sky: ['#4a1220', '#7a2118', '#c24a16'],
       ground: { top: '#d0704a', body: '#8a3f30', deep: '#4f201f', line: '#1b1410' },
       haze: null, embers: true
+    },
+    // ---- v1.5 新增 ----
+    {
+      id: 'forest', name: '巨木林', gen: 'trees', gravity: 0.30, windMax: 10, voidBottom: false,
+      sky: ['#2f6b4f', '#7fb069', '#e9d58a'],
+      ground: { top: '#8fc24f', body: '#5d8f3a', deep: '#3a5f2c', line: '#1b1410' },
+      haze: null
+    },
+    {
+      id: 'city', name: '废弃都市', gen: 'city', gravity: 0.30, windMax: 12, voidBottom: false,
+      sky: ['#3b3f5c', '#8a5a6a', '#e89a5a'],
+      ground: { top: '#c9c2b0', body: '#8d8a86', deep: '#55545a', line: '#1b1410' },
+      haze: null
+    },
+    {
+      id: 'ice', name: '冰封裂谷', gen: 'glacier', gravity: 0.30, windMax: 18, voidBottom: false,
+      sky: ['#3f6f9a', '#9cc9dc', '#eef4ea'],
+      ground: { top: '#f4fbff', body: '#a9d8e6', deep: '#5f9fc0', line: '#1b1410' },
+      haze: null, snow: true
+    },
+    {
+      id: 'bridge', name: '断桥天堑', gen: 'bridge', gravity: 0.30, windMax: 14, voidBottom: true,
+      sky: ['#4a3a6a', '#c0607a', '#f6c06a'],
+      ground: { top: '#d8b98a', body: '#a8825c', deep: '#6a4f3c', line: '#1b1410' },
+      haze: null, clouds: true
+    },
+    {
+      id: 'spires', name: '风蚀石林', gen: 'spires', gravity: 0.30, windMax: 16, voidBottom: false,
+      sky: ['#7a3f6a', '#d8785a', '#f6d28a'],
+      ground: { top: '#f0c48a', body: '#c98a5a', deep: '#8a5540', line: '#1b1410' },
+      haze: null
     }
   ];
 

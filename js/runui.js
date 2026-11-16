@@ -10,7 +10,9 @@
 
   var state = null;                 // 当前远征；null 表示在营地
   var meta = null;
-  var hub = { pick: Run.STARTERS[0], asc: 0, hardcore: false };
+  var hub = { pick: Run.STARTERS[0], asc: 0, hardcore: false, view: 'go', seed: '' };   // view：营地的哪一页（go 出发 / codex 图鉴 / ach 成就 / hist 历史）
+  var note = '';                    // 结算画面上「已复制」之类的一句话
+  var atHub = false;                // 玩家自己点了「回营地」：有存档也别自动跳回那一局
   var slotPick = null;              // 正在给哪个改造挑武器：{from:'reward'|'shop', index}
   var quitArmed = false;
   // 进度备份面板：mode 是 null / 'export' / 'import'；pending 是读出来、等玩家确认要不要覆盖的那份进度
@@ -25,7 +27,39 @@
   function mapName(id) { return RZ.mapById(id).name; }
 
   // ================= 营地（还没出发） =================
+  function hubTabs() {
+    var tabs = [['go', '出发'], ['codex', '图鉴'], ['ach', '成就'], ['hist', '历史']], out = '';
+    tabs.forEach(function (t) {
+      var extra = t[0] === 'ach' ? ' ' + Object.keys(meta.ach).length + ' / ' + Run.ACHIEVEMENTS.length : '';
+      out += '<button class="chip' + (hub.view === t[0] ? ' active' : '') + '" data-act="view" data-id="' + t[0] + '">' + t[1] + extra + '</button>';
+    });
+    return '<div class="chips hub-tabs">' + out + '</div>';
+  }
+
+  /** 每日挑战：今天的种子、今天开哪辆车、今天打得怎么样 */
+  function dailyHTML() {
+    var key = Run.dateKey(), v = RZ.vehicleById(Run.dailyVehicle(key));
+    var d = meta.daily && meta.daily.date === key ? meta.daily : null;
+    return '<div class="daily"><span data-portrait="' + v.id + '"></span><div><u>每日挑战</u><b>' + key + '　' + v.name + '</b>' +
+      '<small>所有人今天都是同一条路线、同一辆车（不管你解没解锁）。标准难度，可以反复打，记最高分。</small>' +
+      '<small class="daily-rec">' + (d ? '今天打了 ' + d.tries + ' 次 · 最高 ' + d.best + ' 分' + (d.won ? ' · 已通关' : '') : '今天还没打过') +
+        (meta.dailyWins ? ' · 累计通关 ' + meta.dailyWins + ' 天' : '') + '</small></div>' +
+      '<button class="btn btn-primary" data-act="daily">' + (Run.loadDaily() ? '继续' : '开始') + '</button></div>';
+  }
+
+  /** 营地里的「有一局打到一半」：远征进行中也能回营地，回来从这儿接着打 */
+  function resumeHTML(r) {
+    var v = RZ.vehicleById(r.vehicleId);
+    return '<div class="daily resume"><span data-portrait="' + v.id + '"></span><div><u>进行中的远征</u><b>' + v.name + '　' +
+      (Run.endlessDepth(r) ? '无尽 ' + Run.endlessDepth(r) + '　' : '') + Run.actOf(r).name + '第 ' + (r.step + 1) + ' 层</b>' +
+      '<small>耐久 ' + r.hp + ' / ' + Run.maxHp(r) + ' · ' + r.relics.length + ' 件遗物 · ' + r.gold + ' 金币' + (r.asc ? ' · 进阶 ' + r.asc : '') + '</small></div>' +
+      '<button class="btn btn-primary" data-act="resume">继续</button></div>';
+  }
+
   function hubHTML() {
+    if (hub.view === 'codex') return '<div class="run-page">' + hubTabs() + codexHTML() + '</div>';
+    if (hub.view === 'ach') return '<div class="run-page">' + hubTabs() + achHTML() + '</div>';
+    if (hub.view === 'hist') return '<div class="run-page">' + hubTabs() + histHTML() + '</div>';
     var cards = '';
     RZ.VEHICLES.forEach(function (v) {
       var open = meta.unlocked.indexOf(v.id) >= 0;
@@ -39,12 +73,15 @@
       ascChips += '<button class="chip' + (a === hub.asc ? ' active' : '') + '" data-act="asc" data-i="' + a + '">' +
         (a === 0 ? '标准' : '进阶 ' + a) + '</button>';
     }
-    var go = open
+    var saved = Run.load();
+    var go = saved
+      ? '<button class="btn btn-primary run-go" data-act="resume">继续远征</button>'
+      : open
       ? '<button class="btn btn-primary run-go" data-act="start">出　发</button>'
       : '<button class="btn run-go" data-act="unlock"' + (meta.medals < Run.UNLOCK_COST ? ' disabled' : '') + '>解锁 ' +
         v.name + '（' + Run.UNLOCK_COST + ' 勋章）</button>';
-    return '<div class="run-hub">' +
-      '<div class="panel"><h3 class="panel-h">车库</h3><div class="veh-grid">' + cards + '</div>' +
+    return '<div class="run-page">' + hubTabs() + '<div class="run-hub">' +
+      '<div class="panel">' + (saved ? resumeHTML(saved) : '') + dailyHTML() + '<h3 class="panel-h">车库</h3><div class="veh-grid">' + cards + '</div>' +
         '<h3 class="panel-h">远征怎么打</h3><ul class="rules run-brief">' +
         '<li>三个区域，每个区域五层，最后一层是 <b>Boss</b>。耐久带进下一场，输一场就结束。</li>' +
         '<li>每场打赢<b>三选一</b>：武器改造可以反复叠，遗物是全局被动——叠出你自己的流派。</li>' +
@@ -58,10 +95,110 @@
         '<h3 class="panel-h">硬核</h3><div class="chips">' +
           '<button class="chip' + (hub.hardcore ? '' : ' active') + '" data-act="hard" data-i="0">关（有弹道预览和出手顺序）</button>' +
           '<button class="chip' + (hub.hardcore ? ' active' : '') + '" data-act="hard" data-i="1">开（全靠自己记）</button></div>' +
+        '<h3 class="panel-h">种子码</h3>' +
+        '<input class="seed-in" id="seed-in" maxlength="16" spellcheck="false" autocomplete="off" placeholder="留空就随机" value="' + esc(hub.seed) + '">' +
+        '<p class="run-tip">种子决定路线、敌人、奖励、商店和事件。填别人给你的种子码，就能打跟他一模一样的一局。</p>' +
         '<div class="run-go-row">' + go + '</div>' +
-        '<p class="run-tip">战绩：远征 ' + meta.runs + ' 次 · 通关 ' + meta.wins + ' 次 · 单次最多打赢 ' + meta.best + ' 场</p>' +
+        (saved ? '<p class="run-tip">手里还有一局没打完。要开新的一局，先进去把它打完或者放弃；每日挑战不受影响，随时能打。</p>' : '') +
+        '<p class="run-tip">战绩：远征 ' + meta.runs + ' 次 · 通关 ' + meta.wins + ' 次 · 单次最多打赢 ' + meta.best + ' 场' +
+          (meta.endlessBest ? ' · 无尽最多再打穿 ' + meta.endlessBest + ' 个区域' : '') + '</p>' +
         backupHTML() +
-      '</div></div>';
+      '</div></div></div>';
+  }
+
+  // ---- 图鉴 ----
+  var RARITY_NAMES = { common: '普通遗物', rare: '稀有遗物', boss: 'Boss 遗物', curse: '诅咒遗物' };
+  function codexCard(cls, kind, name, desc, seen, extra) {
+    return '<div class="offer cx ' + cls + (seen ? '' : ' unseen') + '"><u>' + kind + '</u><b>' + (seen ? name : '？？？') + '</b><p>' +
+      (seen ? desc : '还没见过。') + '</p>' + (seen && extra ? '<div class="syns">' + extra + '</div>' : '') + '</div>';
+  }
+  function codexHTML() {
+    var sn = meta.seen, h = '';
+    var section = function (title, got, total, body) {
+      return '<h3 class="panel-h">' + title + ' <em>' + got + ' / ' + total + '</em></h3><div class="offers cx-grid">' + body + '</div>';
+    };
+    ['common', 'rare', 'boss', 'curse'].forEach(function (rar) {
+      var list = Run.RELICS.filter(function (r) { return r.rarity === rar; }), got = 0, body = '';
+      list.forEach(function (r) {
+        var seen = sn.relics.indexOf(r.id) >= 0; if (seen) got++;
+        body += codexCard('relic ' + rar, RARITY_NAMES[rar], r.name, r.desc, seen);
+      });
+      h += section(RARITY_NAMES[rar], got, list.length, body);
+    });
+    // 联动：两半都见过才亮出来
+    var sg = 0, sb = '';
+    Run.SYNERGIES.forEach(function (sy) {
+      var seen = sn.relics.indexOf(sy.needs[0]) >= 0 && sn.relics.indexOf(sy.needs[1]) >= 0; if (seen) sg++;
+      sb += codexCard('relic syn-card', '联动', sy.name, sy.desc, seen,
+        '<em class="syn on">' + Run.relicById(sy.needs[0]).name + ' + ' + Run.relicById(sy.needs[1]).name + '</em>');
+    });
+    h += section('联动（两件遗物都见过才显示）', sg, Run.SYNERGIES.length, sb);
+    var mg = 0, mb = '';
+    Run.MODS.forEach(function (m) {
+      var seen = sn.mods.indexOf(m.id) >= 0; if (seen) mg++;
+      mb += codexCard('mod' + (m.rare ? ' rare' : ''), m.rare ? '稀有改造' : '武器改造', m.name, m.desc, seen);
+    });
+    h += section('武器改造', mg, Run.MODS.length, mb);
+    // 敌人：三个 Boss + 三种特殊敌人
+    var fg = 0, fb = '';
+    Run.ACTS.forEach(function (a) {
+      var seen = sn.foes.indexOf('boss:' + a.boss.kit) >= 0; if (seen) fg++;
+      fb += codexCard('relic boss', 'Boss', a.boss.name, '「' + a.name + '」的守关者。', seen);
+    });
+    Object.keys(Run.FOE_KINDS).forEach(function (k) {
+      var seen = sn.foes.indexOf('kind:' + k) >= 0; if (seen) fg++;
+      fb += codexCard('mod', '特殊敌人', Run.FOE_KINDS[k].name, Run.FOE_KINDS[k].note, seen);
+    });
+    h += section('敌人', fg, Run.ACTS.length + Object.keys(Run.FOE_KINDS).length, fb);
+    var wg = 0, wb = '';
+    Object.keys(RZ.MAP_MODS).forEach(function (k) {
+      var seen = sn.mapMods.indexOf(k) >= 0; if (seen) wg++;
+      wb += codexCard('mod', '地图词条', RZ.MAP_MODS[k].name, RZ.MAP_MODS[k].desc, seen);
+    });
+    h += section('地图词条', wg, Object.keys(RZ.MAP_MODS).length, wb);
+    return '<div class="panel"><p class="run-tip">拿到过的遗物、装过的改造、打过的敌人和词条会记在这里。打一场记一次，中途关掉也不丢。</p>' + h + '</div>';
+  }
+
+  // ---- 成就 ----
+  function achLine(a, when) {
+    return '<div class="ach' + (when ? ' done' : '') + '"><i>' + (when ? '✓' : '') + '</i><div><b>' + a.name + '</b><span>' + a.desc + '</span></div>' +
+      '<em>+' + a.medals + ' 勋章</em></div>';
+  }
+  function achHTML() {
+    var done = '', todo = '';
+    Run.ACHIEVEMENTS.forEach(function (a) { if (meta.ach[a.id]) done += achLine(a, meta.ach[a.id]); else todo += achLine(a, 0); });
+    return '<div class="panel"><p class="run-tip">每个成就只算一次，达成时当场发勋章——勋章可以回「出发」那一页解锁战车。</p>' +
+      (done ? '<h3 class="panel-h">已达成 <em>' + Object.keys(meta.ach).length + '</em></h3><div class="ach-list">' + done + '</div>' : '') +
+      (todo ? '<h3 class="panel-h">还没达成</h3><div class="ach-list">' + todo + '</div>' : '') + '</div>';
+  }
+  /** 这一场 / 这一局里新达成的成就：一条黄色的横幅 */
+  function achBanner(ids) {
+    if (!ids || !ids.length) return '';
+    var out = '';
+    ids.forEach(function (id) { var a = Run.achById(id); if (a) out += '<div class="ach-new"><u>成就达成</u><b>' + a.name + '</b><span>' + a.desc + '</span><em>+' + a.medals + ' 勋章</em></div>'; });
+    return out;
+  }
+
+  // ---- 历史 ----
+  function whereText(h) {
+    if (h.endless) return '通关　无尽再打穿 ' + h.endless + ' 个区域';
+    if (h.won) return '通关';
+    return '止步「' + Run.ACTS[h.act % Run.ACTS.length].name + '」第 ' + (h.step + 1) + ' 层';
+  }
+  function histHTML() {
+    if (!meta.history.length) return '<div class="panel"><p class="run-tip">还没有打完过一局远征。打完的每一局（最近 ' + Run.HISTORY_MAX + ' 局）都会记在这里。</p></div>';
+    var rows = '';
+    meta.history.forEach(function (h, i) {
+      var v = RZ.vehicleById(h.vid), d = new Date(h.t);
+      var tags = (h.daily ? '<i>每日 ' + h.daily + '</i>' : '') + (h.asc ? '<i>进阶 ' + h.asc + '</i>' : '') + (h.hardcore ? '<i>硬核</i>' : '');
+      var relics = (h.relics || []).map(function (id) { var r = Run.relicById(id); return r ? r.name : ''; }).filter(Boolean).join('、');
+      rows += '<div class="hist' + (h.won ? ' won' : '') + '"><span data-portrait="' + v.id + '"></span>' +
+        '<div><b>' + v.name + '　' + whereText(h) + '</b>' + tags +
+        '<small>' + Run.dateKey(d) + ' · 打赢 ' + h.battles + ' 场 · Boss ' + h.bosses + ' 个 · ' + (h.relics || []).length + ' 件遗物' + (relics ? '：' + relics : '') + '</small></div>' +
+        '<div class="hist-r"><em>' + h.score + ' 分</em>' +
+        (h.seed && !h.daily ? '<button class="btn btn-ghost" data-act="reseed" data-i="' + i + '">用这个种子再来（' + esc(h.seed) + '）</button>' : '') + '</div></div>';
+    });
+    return '<div class="panel"><div class="hist-list">' + rows + '</div></div>';
   }
 
   /** 战车的远征被动：营地详情和侧栏都用这一块 */
@@ -113,7 +250,7 @@
     var p = bk.pending, cur = meta;
     var line = function (m, r) {
       return '勋章 ' + m.medals + ' 枚，解锁 ' + m.unlocked.length + ' 辆战车，通关 ' + m.wins + ' 次' +
-        (r ? '，另有一局打到一半的远征（' + RZ.vehicleById(r.vehicleId).name + '，' + Run.ACTS[Math.min(r.act, 2)].name + '第 ' + (r.step + 1) + ' 层）' : '');
+        (r ? '，另有一局打到一半的远征（' + RZ.vehicleById(r.vehicleId).name + '，' + Run.actOf(r).name + '第 ' + (r.step + 1) + ' 层）' : '');
     };
     return '<div class="run-over"><div class="dialog wide">' +
       '<h3>导入进度</h3>' +
@@ -152,12 +289,15 @@
 
   function sideHTML() {
     var v = Run.playerVehicle(state), hpMax = v.hp, i;
-    var pips = '';
+    var pips = '', loop = Run.loopOf(state), cycle = state.act % Run.ACTS.length;
+    var deep = Run.endlessDepth(state), em = Run.endlessMul(state);
+    if (deep) pips += '<div class="act-row cur endless"><span>无尽 第 ' + deep + ' 个区域</span></div>' +
+      '<p class="endless-mul">敌人耐久 ×' + em.hp.toFixed(1) + '　攻击 ×' + em.atk.toFixed(1) + '　Boss 耐久 ×' + em.bossHp.toFixed(1) + '<br>每打穿一个区域再乘一次</p>';
     for (var a = 0; a < Run.ACTS.length; a++) {
-      pips += '<div class="act-row' + (a === state.act ? ' cur' : '') + '"><span>' + Run.ACTS[a].name + '</span>';
+      pips += '<div class="act-row' + (a === cycle ? ' cur' : '') + '"><span>' + Run.ACTS[a].name + '</span>';
       for (i = 0; i < Run.LAYERS_PER_ACT; i++) {
-        var done = a < state.act || (a === state.act && i < state.step);
-        var cur = a === state.act && i === state.step;
+        var done = a < cycle || (a === cycle && i < state.step);
+        var cur = a === cycle && i === state.step;
         pips += '<i class="' + (done ? 'done' : cur ? 'cur' : '') + (i === Run.LAYERS_PER_ACT - 1 ? ' boss' : '') + '"></i>';
       }
       pips += '</div>';
@@ -182,10 +322,12 @@
         '<small>耐久 ' + state.hp + ' / ' + hpMax + '　攻击 ' + v.atk + '</small></div></div>' +
       passiveHTML(state.vehicleId) +
       '<div class="act-pips">' + pips + '</div>' +
+      (state.seed ? '<p class="seed-line">' + (state.daily ? '每日挑战 ' + state.daily : '种子 <b>' + esc(state.seed) + '</b>') + '</p>' : '') +
       '<h3 class="panel-h">武器</h3>' + weaponLine('1', v.w1) + weaponLine('2', v.w2) + weaponLine('必杀', v.ss) +
       '<h3 class="panel-h">道具</h3><div class="ritems">' + items + '</div>' +
       '<h3 class="panel-h">遗物 <em>' + state.relics.length + '</em></h3>' + syns +
       (relics || '<p class="run-tip">还没有遗物。打赢战斗、逛商店、碰运气都能拿到。</p>') +
+      '<button class="btn run-quit" data-act="camp">回营地（这一局留着）</button>' +
       '<button class="btn btn-ghost run-quit" data-act="quit">' + (quitArmed ? '再点一次确认放弃' : '放弃远征') + '</button>' +
       '</div>';
   }
@@ -261,7 +403,7 @@
   function choiceHTML() {
     var list = Run.choices(state), cards = '';
     list.forEach(function (n, i) { cards += nodeCard(n, i); });
-    return '<div class="run-main"><h3 class="run-title">' + Run.ACTS[state.act].name + ' · 第 ' + (state.step + 1) + ' / ' +
+    return '<div class="run-main"><h3 class="run-title">' + (Run.endlessDepth(state) ? '无尽 ' + Run.endlessDepth(state) + ' · ' : '') + Run.actOf(state).name + ' · 第 ' + (state.step + 1) + ' / ' +
       Run.LAYERS_PER_ACT + ' 层<small>选一个去处</small></h3><div class="nodes n' + list.length + '">' + cards + '</div></div>';
   }
 
@@ -308,7 +450,7 @@
     if (p.kind === 'reward') {
       for (i = 0; i < p.choices.length; i++) h += offerCard(p.choices[i], i, 'reward');
       return '<div class="run-main"><h3 class="run-title">' + (p.from === 'boss' ? 'Boss 击破！' : p.from === 'chest' ? '宝箱' : p.from === 'trial' ? '挑战成功' : '战斗胜利') +
-        '<small>金币 +' + p.gold + (p.style ? '（含花式赏金 ' + p.style + '）' : '') + ' · ' + ['', '', '二', '三', '四', '五'][p.choices.length] + '选一</small></h3>' +
+        '<small>金币 +' + p.gold + (p.style ? '（含花式赏金 ' + p.style + '）' : '') + ' · ' + ['', '', '二', '三', '四', '五'][p.choices.length] + '选一</small></h3>' + achBanner(p.ach) +
         '<div class="offers' + (p.choices.length > 3 ? ' four' : '') + '">' + h + '</div>' +
         '<button class="btn btn-ghost run-skip" data-act="skip">都不要（换 15 金币）</button></div>';
     }
@@ -340,19 +482,41 @@
       '<button class="btn btn-primary" data-act="leave">继续前进</button></div></div>';
   }
 
+  /** 一段能贴给别人的战报 */
+  function shareText() {
+    var v = RZ.vehicleById(state.vehicleId), depth = Math.max(0, (state.endless || 0) - 1);
+    var where = depth ? '通关，无尽再打穿 ' + depth + ' 个区域' : state.won ? '通关' : '止步「' + Run.actOf(state).name + '」第 ' + (state.step + 1) + ' 层';
+    return '燃烧战车 ' + (state.daily ? '每日挑战 ' + state.daily : '远征') + '｜' + v.name + '｜' + where + '｜' + state.score + ' 分' +
+      (state.daily ? '' : '｜种子 ' + state.seed) + '\n' + location.href.split('#')[0] + (state.daily ? '' : '#seed=' + state.seed);
+  }
+
   function overHTML() {
     var relics = state.relics.map(function (id) { return Run.relicById(id).name; }).join('、') || '无';
+    var depth = Math.max(0, (state.endless || 0) - 1);
+    var title = state.endless ? '无尽远征结束' : state.won ? '远征通关' : '远征失败';
+    var line = state.endless ? '通关之后又打穿了 ' + depth + ' 个区域，倒在「' + Run.actOf(state).name + '」第 ' + (state.step + 1) + ' 层。'
+      : state.won ? '三个区域全部打穿。' : '倒在了「' + Run.actOf(state).name + '」第 ' + (state.step + 1) + ' 层。';
+    var row = function (k, v, cls) { return '<div class="rrow"><span></span><span>' + k + '</span><span></span><span class="' + (cls || '') + '">' + v + '</span></div>'; };
     return '<div class="run-over"><div class="dialog wide">' +
-      '<h3 style="color:' + (state.won ? '#f5b921' : '#d8361f') + '">' + (state.won ? '远征通关' : '远征失败') + '</h3>' +
-      '<p class="over-line">' + (state.won ? '三个区域全部打穿。' : '倒在了「' + Run.ACTS[Math.min(state.act, 2)].name + '」第 ' + (state.step + 1) + ' 层。') + '</p>' +
+      '<h3 style="color:' + (state.won ? '#f5b921' : '#d8361f') + '">' + title + '</h3>' +
+      '<p class="over-line">' + line + '</p>' + achBanner(state.endAch) +
       '<div class="result-body">' +
-        '<div class="rrow"><span></span><span>打赢的战斗</span><span></span><span class="dmg">' + state.battles + ' 场</span></div>' +
-        '<div class="rrow"><span></span><span>击破的 Boss</span><span></span><span class="dmg">' + state.bosses + ' 个</span></div>' +
-        '<div class="rrow"><span></span><span>带着的遗物</span><span></span><span>' + relics + '</span></div>' +
-        '<div class="rrow"><span></span><span>获得勋章</span><span></span><span class="dmg">+' + state.earned + '</span></div>' +
+        row('得分', state.score + ' 分', 'dmg') +
+        row('打赢的战斗', state.battles + ' 场', 'dmg') +
+        row('击破的 Boss', state.bosses + ' 个', 'dmg') +
+        row('带着的遗物', relics) +
+        (state.seed ? row(state.daily ? '每日挑战' : '种子码', state.daily || esc(state.seed)) : '') +
+        row('获得勋章', '+' + state.earned, 'dmg') +
       '</div>' +
-      (state.won && state.asc < Run.MAX_ASC ? '<p class="over-line">已开放进阶 ' + (state.asc + 1) + '。</p>' : '') +
-      '<button class="btn btn-primary" data-act="home">回到营地</button></div></div>';
+      (state.won && !state.endless && state.asc < Run.MAX_ASC ? '<p class="over-line">已开放进阶 ' + (state.asc + 1) + '。</p>' : '') +
+      (Run.canEndless(state) ? '<p class="over-line">还没打够？带着现在这一身接着打——三个区域轮着来，每打穿一个，敌人耐久 ×' + Run.ENDLESS.hp + '、攻击 ×' + Run.ENDLESS.atk +
+        '，Boss 涨得更快，每场都带词条。倒下也算通关。</p>' : '') +
+      (note ? '<p class="over-line over-note">' + note + '</p>' : '') +
+      '<textarea id="bk-code" class="share-box" readonly>' + esc(shareText()) + '</textarea>' +
+      '<div class="row over-btns">' +
+        (Run.canEndless(state) ? '<button class="btn btn-primary" data-act="endless">进入无尽模式</button>' : '') +
+        '<button class="btn" data-act="share">复制战报</button>' +
+        '<button class="btn' + (Run.canEndless(state) ? '' : ' btn-primary') + '" data-act="home">回到营地</button></div></div></div>';
   }
 
   // ================= 重画 =================
@@ -360,7 +524,7 @@
     var root = $('run-root');
     if (!root) return;
     meta = Run.loadMeta();
-    if (!state) state = Run.load();
+    if (!state && !atHub) state = Run.load();
     if (hub.asc > meta.asc) hub.asc = meta.asc;
     var html;
     if (bk.pending) html = importHTML();
@@ -398,17 +562,31 @@
     if (act !== 'quit') quitArmed = false;
 
     if (act.indexOf('bk-') === 0) { onBackup(act); render(); return; }
+    if ($('seed-in')) hub.seed = Run.cleanSeed($('seed-in').value);     // 整块重画之前先把输入框里的字收起来
     if (act === 'pick') hub.pick = id;
+    else if (act === 'view') hub.view = id;
+    else if (act === 'daily') {
+      try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e0) { /* 不支持就算了 */ }
+      state = Run.loadDaily() || Run.newDaily(); note = '';     // 今天那局打到一半就接着打
+      Run.save(state);
+    }
+    else if (act === 'resume') { state = Run.load(); note = ''; }
+    else if (act === 'camp') { if (state && !state.over) Run.save(state); state = null; atHub = true; hub.view = 'go'; render(); return; }
+    else if (act === 'reseed') { var hr = meta.history[i]; if (hr) { hub.seed = hr.seed; hub.view = 'go'; if (meta.unlocked.indexOf(hr.vid) >= 0) hub.pick = hr.vid; } }
+    else if (act === 'share') { copyText(shareText(), function () { note = '战报已复制，贴给朋友吧。'; render(); }); return; }
+    else if (act === 'endless') { if (Run.goEndless(state)) { note = ''; RZ.SFX.relic(); } }
     else if (act === 'asc') hub.asc = i;
     else if (act === 'hard') hub.hardcore = i === 1;
     else if (act === 'unlock') { if (Run.unlock(meta, hub.pick)) RZ.SFX.relic(); }
     else if (act === 'start') {
+      if (Run.load()) { render(); return; }                       // 普通远征的位置上已经有一局了
       // 请浏览器别自动清理本站的数据。不是所有浏览器都认，认了也挡不住玩家自己清——所以才有进度码
       try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e2) { /* 不支持就算了 */ }
-      state = Run.newRun(hub.pick, { asc: hub.asc, hardcore: hub.hardcore });
+      state = Run.newRun(hub.pick, { asc: hub.asc, hardcore: hub.hardcore, seed: hub.seed });
+      note = '';
       Run.save(state);
     }
-    else if (act === 'home') { state = null; }
+    else if (act === 'home') { state = null; note = ''; hub.view = 'go'; atHub = true; }
     else if (!state) return;
     else if (act === 'quit') {
       if (!quitArmed) quitArmed = true;
@@ -481,6 +659,11 @@
       fr.readAsText(f);
     });
     // 网址里带着进度（#save=…）：读出来等玩家确认，然后把它从地址栏里拿掉，免得刷新时再问一遍
+    // 网址里带着种子（#seed=…）：填进种子码那一栏，等玩家自己点出发
+    if (location.hash.indexOf('#seed=') === 0) {
+      hub.seed = Run.cleanSeed(decodeURIComponent(location.hash.slice(6)));
+      try { history.replaceState(null, '', location.href.split('#')[0]); } catch (e3) { location.hash = ''; }
+    }
     if (location.hash.indexOf('#save=') === 0) {
       tryRead(location.hash.slice(6));
       try { history.replaceState(null, '', location.href.split('#')[0]); } catch (e) { location.hash = ''; }

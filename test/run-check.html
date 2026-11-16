@@ -5,14 +5,35 @@
 <iframe id="f" src="../index.html"></iframe>
 <script>
 /* 远征各界面的截图自检，用法同 ui-check.html：
-   ?stage=hub|backup|import|map|world|boss|reward|shop|rest|event|altar|over|battle|charge|bossfight|field|night|flow
+   ?stage=hub|codex|ach|hist|backup|import|map|world|boss|reward|shop|rest|event|altar|over|won|battle|charge|bossfight|field|night|flow
    battle / charge 会真的进一场远征战斗（爽快规则），charge 额外按住空格看弹道预览。 */
 var stage = new URLSearchParams(location.search).get('stage') || 'map';
 document.getElementById('f').onload = function () {
   var w = this.contentWindow, d = w.document, RZ = w.RZ, Run = RZ.Run;
-  try { w.localStorage.removeItem('rz-run'); } catch (e) {}
+  try { w.localStorage.removeItem('rz-run'); w.localStorage.removeItem('rz-daily'); } catch (e) {}
   d.querySelector('[data-go="run"]').click();
   if (stage === 'hub') return;
+  if (stage === 'camp') {                         // 远征打到一半回营地：多一张「进行中的远征」
+    var mid = Run.newRun('honglong'); mid.act = 1; mid.step = 2; mid.relics = ['crit']; mid.gold = 130; Run.save(mid);
+    RZ.RunUI.render();
+    d.querySelector('[data-act="camp"]').click();
+    return;
+  }
+  if (stage === 'codex' || stage === 'ach' || stage === 'hist') {     // 营地的三页：先造一份有内容的局外存档
+    var mm = Run.loadMeta();
+    mm.seen = { relics: ['crit', 'after', 'demo', 'turbo', 'scope', 'dice', 'ultra', 'plate', 'thorns'], mods: ['split', 'heavy', 'chain', 'burn'],
+      foes: ['boss:crusher', 'kind:turret', 'kind:bomber'], mapMods: ['night', 'gale'] };
+    mm.ach = { first: 1, ringout: 1, flawless: 1, boss1: 1, night: 1, win: 1 };
+    mm.history = [
+      { id: 'a', t: Date.now(), vid: 'liehuo', won: true, act: 5, step: 2, asc: 1, battles: 21, bosses: 4, relics: ['crit', 'after', 'demo', 'turbo'], seed: 'K7F2QD', daily: null, hardcore: false, endless: 1, score: 6240 },
+      { id: 'b', t: Date.now() - 864e5, vid: 'tuoer', won: false, act: 1, step: 3, asc: 0, battles: 7, bosses: 1, relics: ['scope', 'dice'], seed: 'D20261114', daily: '2026-11-14', hardcore: false, endless: 0, score: 1310 },
+      { id: 'c', t: Date.now() - 2 * 864e5, vid: 'tiejingang', won: false, act: 0, step: 4, asc: 0, battles: 3, bosses: 0, relics: [], seed: 'ZZTOP9', daily: null, hardcore: true, endless: 0, score: 315 }];
+    mm.daily = { date: Run.dateKey(), best: 1310, tries: 2, won: false }; mm.dailyWins = 3; mm.medals = 14;
+    Run.saveMeta(mm);
+    RZ.RunUI.render();
+    d.querySelector('[data-act="view"][data-id="' + stage + '"]').click();
+    return;
+  }
   if (stage === 'backup') {                       // 营地里展开「导出进度」
     var m0 = Run.loadMeta(); m0.sinceBackup = 3; m0.medals = 9; Run.saveMeta(m0);
     RZ.RunUI.render();
@@ -41,6 +62,7 @@ document.getElementById('f').onload = function () {
   if (stage === 'rest') { s.step = 2; Run.enter(s, 2); }
   if (stage === 'event') { s.gold = 20; s.pending = { kind: 'event', id: 'convoy' }; }   // 钱不够，第一个选项灰掉
   if (stage === 'over') { s.battles = 7; s.bosses = 1; s.act = 1; s.step = 3; Run.finish(s, false); }
+  if (stage === 'won') { try { w.localStorage.removeItem('rz-meta'); } catch (e) {} s.battles = 13; s.bosses = 2; s.act = 2; s.step = 4; s.bosses = 3; Run.advance(s); }   // 通关：成就横幅 + 无尽入口
   if (stage === 'boss' || stage === 'bossfight') { s.step = 4; }
   if (stage === 'altar') { s.pending = { kind: 'event', id: 'altar' }; }
   var foe = function (o) { var e = { vid: 'honglong', name: '红龙', hpMul: 0.7, atkMul: 0.7, mods: { w1: [], w2: [], ss: [] }, perks: {} }; for (var k in o) e[k] = o[k]; return e; };

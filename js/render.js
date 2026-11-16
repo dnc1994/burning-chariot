@@ -238,7 +238,13 @@
     sea:    { sky: ['#0d3f4c', '#17656b', '#2c8d85'], disc: '#5cc0ad', far: '#0f4a55', near: '#0a3540', kind: 'ruins' },
     sky:    { sky: ['#5db4dc', '#9dd6e6', '#f6e7bd'], disc: YELLOW, far: '#7fb9d6', near: '#5a9cc2', kind: 'isles' },
     star:   { sky: ['#17153a', '#2a2560', '#4d3c84'], disc: '#f08a2c', far: '#221e4f', near: '#15123a', kind: 'planet' },
-    canyon: { sky: ['#3a0f14', '#8a2318', RED], disc: YELLOW, far: '#5a1a16', near: '#2a0c10', kind: 'volcano' }
+    canyon: { sky: ['#3a0f14', '#8a2318', RED], disc: YELLOW, far: '#5a1a16', near: '#2a0c10', kind: 'volcano' },
+    // v1.5 新增。kind 决定图眼在哪、剪影画什么：pines 松林、towers 楼群、peaks 雪峰、gorge 峡壁、pillars 石柱
+    forest: { sky: ['#1f6b5a', '#5fa870', '#e9d58a'], disc: PAPER, far: '#2f7a55', near: '#1d4f3c', kind: 'pines' },
+    city:   { sky: ['#2c2f52', '#8a4f6a', '#f08a2c'], disc: YELLOW, far: '#3d3a5c', near: '#22203a', kind: 'towers' },
+    ice:    { sky: ['#2f6f9f', '#8fc7dc', '#eef4ea'], disc: PAPER, far: '#b9dcea', near: '#6fa9c9', kind: 'peaks' },
+    bridge: { sky: ['#3f2f6a', '#c0506a', '#f6c06a'], disc: PAPER, far: '#7a3f5c', near: '#4a2a4a', kind: 'gorge' },
+    spires: { sky: ['#6a2f6a', '#d8603f', '#f6cf6b'], disc: PAPER, far: '#a8483f', near: '#6a2a3a', kind: 'pillars' }
   };
 
   function Background(mapDef) {
@@ -260,6 +266,10 @@
     var m = this.map, i;
     if (m.clouds) for (i = 0; i < this.clouds.length; i++) {
       var c = this.clouds[i]; c.x += c.v; if (c.x > RZ.WORLD_W + 200) c.x = -200;
+    }
+    if (m.snow) for (i = 0; i < this.motes.length; i++) {              // 雪往下落，其余的往上飘
+      var sn = this.motes[i]; sn.y += sn.v; sn.x += Math.sin(t * 0.002 + sn.p) * 0.5;
+      if (sn.y > RZ.WORLD_H + 10) { sn.y = -10; sn.x = Math.random() * RZ.WORLD_W; }
     }
     if (m.bubbles || m.embers) for (i = 0; i < this.motes.length; i++) {
       var o = this.motes[i]; o.y -= o.v; o.x += Math.sin(t * 0.002 + o.p) * 0.3;
@@ -325,6 +335,11 @@
     if (P.kind === 'planet') { cx = W * 0.72; cy = H * 0.3; R = 120; }
     if (P.kind === 'ruins') { cx = W * 0.5; cy = -80; R = 0; }
     if (P.kind === 'isles') { cx = W * 0.24; cy = H * 0.22; R = 86; }
+    if (P.kind === 'pines') { cx = W * 0.3; cy = H * 0.3; R = 100; }
+    if (P.kind === 'towers') { cx = W * 0.62; cy = H * 0.58; R = 170; }
+    if (P.kind === 'peaks') { cx = W * 0.76; cy = H * 0.2; R = 70; }
+    if (P.kind === 'gorge') { cx = W * 0.5; cy = H * 0.5; R = 120; }
+    if (P.kind === 'pillars') { cx = W * 0.4; cy = H * 0.6; R = 190; }
     if (P.kind !== 'planet') {
       g.save();
       g.globalAlpha = P.kind === 'ruins' ? 0.16 : 0.22;
@@ -388,6 +403,41 @@
     } else if (P.kind === 'planet') {
       ridge(g, x0, x1, H, 46, function (x) { return H * 0.74 + Math.abs(Math.sin(x * 0.011 + seed)) * -60 + Math.sin(x * 0.04) * 8; }, P.far);
       ridge(g, x0, x1, H, 60, function (x) { return H * 0.84 + Math.sin(x * 0.007 + seed) * 22; }, P.near);
+    } else if (P.kind === 'pines') {                 // 松林：两排大小不一的三角
+      for (var layer = 0; layer < 2; layer++) {
+        var cnt = layer ? 22 : 30, baseY = H * (layer ? 0.9 : 0.8);
+        for (i = 0; i < cnt; i++) {
+          var tx = x0 + (i + Math.random() * 0.7) * ((x1 - x0) / cnt), th = (layer ? 300 : 210) * (0.6 + Math.random() * 0.6), tw2 = th * 0.3;
+          poly(g, [tx, baseY - th, tx + tw2, baseY - th * 0.35, tx + tw2 * 0.55, baseY - th * 0.35, tx + tw2 * 1.25, baseY + 400, tx - tw2 * 1.25, baseY + 400, tx - tw2 * 0.55, baseY - th * 0.35, tx - tw2, baseY - th * 0.35]);
+          ink(g, layer ? P.near : P.far, 3);
+        }
+      }
+    } else if (P.kind === 'towers') {                // 楼群：高矮不一的方块，零星几扇亮着的窗
+      for (i = 0; i < 26; i++) {
+        var bx2 = x0 + (i + Math.random() * 0.4) * ((x1 - x0) / 26), bh = 150 + Math.random() * 330, bw2 = 70 + Math.random() * 50, near2 = i % 2;
+        g.beginPath(); g.rect(bx2, H * 0.86 - bh, bw2, bh + 400); ink(g, near2 ? P.near : P.far, 3);
+        g.fillStyle = YELLOW;
+        for (var wy = 0; wy < 5; wy++) if (Math.random() < 0.4) g.fillRect(bx2 + 14 + (wy % 2) * 26, H * 0.86 - bh + 22 + wy * 34, 12, 16);
+      }
+    } else if (P.kind === 'peaks') {                 // 雪峰：尖顶，顶上一块白
+      for (i = 0; i < 9; i++) {
+        var mx = x0 + (i + 0.5) * ((x1 - x0) / 9) + (Math.random() - 0.5) * 80, mh = 240 + Math.random() * 200, mw = 190 + Math.random() * 80, my = H * 0.84;
+        poly(g, [mx, my - mh, mx + mw, my + 400, mx - mw, my + 400]); ink(g, i % 2 ? P.near : P.far, 3);
+        poly(g, [mx, my - mh, mx + mw * 0.2, my - mh * 0.78, mx + mw * 0.06, my - mh * 0.72, mx - mw * 0.08, my - mh * 0.8, mx - mw * 0.2, my - mh * 0.78]); ink(g, PAPER, 3);
+      }
+    } else if (P.kind === 'gorge') {                 // 峡壁：两边高、中间空，远处一道桥的影子
+      ridge(g, x0, x1, H, 30, function (x) {
+        var d = Math.abs(x - W * 0.5) / (W * 0.5 + pad);
+        return H * 0.92 - Math.pow(d, 1.6) * 520 + Math.sin(x * 0.03 + seed) * 8;
+      }, P.far);
+      g.beginPath(); g.rect(x0, H * 0.7, x1 - x0, 16); ink(g, P.near, 3);
+      for (i = 0; i < 9; i++) { g.beginPath(); g.rect(x0 + (i + 0.5) * ((x1 - x0) / 9) - 12, H * 0.7 + 16, 24, 700); ink(g, P.near, 3); }
+    } else if (P.kind === 'pillars') {               // 石柱：平顶的梯形
+      for (i = 0; i < 18; i++) {
+        var sx2 = x0 + (i + Math.random() * 0.6) * ((x1 - x0) / 18), sh = 160 + Math.random() * 300, st = 22 + Math.random() * 20, sb = st + 26 + Math.random() * 30, sy2 = H * 0.86;
+        poly(g, [sx2 - st, sy2 - sh, sx2 + st, sy2 - sh, sx2 + sb, sy2 + 400, sx2 - sb, sy2 + 400]); ink(g, i % 2 ? P.near : P.far, 3);
+      }
+      ridge(g, x0, x1, H, 60, function (x) { return H * 0.88 + Math.sin(x * 0.006 + seed) * 20; }, P.near);
     } else {                                           // 火山
       ridge(g, x0, x1, H, 30, function (x) {
         var d = Math.abs(x - cx);
@@ -410,6 +460,10 @@
         var c = this.clouds[i];
         cloudShape(ctx, c.x, c.y, 62 * c.s); ink(ctx, PAPER, 3);
       }
+    }
+    if (m.snow) {
+      ctx.fillStyle = PAPER;
+      for (i = 0; i < this.motes.length; i++) ctx.fillRect(this.motes[i].x, this.motes[i].y, this.motes[i].r + 1, this.motes[i].r + 1);
     }
     if (m.bubbles || m.embers) {
       for (i = 0; i < this.motes.length; i++) {
